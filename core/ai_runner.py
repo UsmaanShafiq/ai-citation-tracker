@@ -265,11 +265,11 @@ ALL_TOOLS = {
     },
     "Gemini": {
         "fn": run_on_gemini,
-        "free": True,
+        "free": False,
         "requires_key": "GEMINI_API_KEY",
         "cost_per_call": 0.0,
-        "free_limit": 1500,
-        "description": "Gemini 1.5 Flash. 1500 free calls/day."
+        "free_limit": 0,
+        "description": "Gemini API via key. Quota/billing depends on your Google project."
     },
     "ChatGPT": {
         "fn": run_on_chatgpt,

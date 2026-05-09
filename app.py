@@ -13,6 +13,45 @@ from core.ai_runner import ALL_TOOLS, run_selected_tools, check_key_exists, get_
 from core.brand_detector import detect_brands
 from core.scorer import calculate_citation_share
 
+
+def format_error_message(raw_error: str) -> str:
+    """
+    Convert provider errors into clean, user-friendly messages.
+    """
+    msg = (raw_error or "").strip()
+    low = msg.lower()
+
+    # Token/context window style errors ("memory reached" from model side)
+    if (
+        "context_length_exceeded" in low
+        or "maximum context length" in low
+        or "context window" in low
+        or "token limit" in low
+        or "too many tokens" in low
+        or "prompt is too long" in low
+        or "memory" in low and "exceed" in low
+    ):
+        return "Request too large for the selected model (context/memory limit reached). Reduce ICP length or query count, or switch models."
+
+    # Quota / rate limit errors
+    if (
+        "429" in low
+        or "rate_limit" in low
+        or "resource_exhausted" in low
+        or "quota" in low
+    ):
+        return "API quota or rate limit reached. Wait and retry, add billing, or enable another checked provider as fallback."
+
+    # Missing module / SDK errors
+    if "no module named" in low or "sdk not installed" in low:
+        return "Required SDK is not installed in this environment. Install dependencies from requirements.txt and retry."
+
+    # Invalid model / provider mismatch errors
+    if "not found" in low and "model" in low:
+        return "Selected model is unavailable for this API key/project. Try another provider or update the model configuration."
+
+    return msg
+
 # =============================================================================
 # PAGE CONFIG
 # =============================================================================
@@ -56,14 +95,7 @@ with st.sidebar:
     )
 
     st.divider()
-
-    num_queries = st.slider(
-        "Queries per category",
-        min_value=1,
-        max_value=5,
-        value=2,
-        help="5 categories x this number = total queries"
-    )
+    st.caption("Queries per run: 10")
 
     st.divider()
 
@@ -199,7 +231,7 @@ with st.sidebar:
         disabled=len(selected_tools) == 0
     )
 
-    total_queries = num_queries * 5
+    total_queries = 10
     total_calls = total_queries * len(selected_tools)
     st.caption(f"Queries: {total_queries} | Tools: {len(selected_tools)} | API calls: {total_calls}")
 
@@ -287,17 +319,13 @@ if run_btn:
             icp_data = parse_and_validate(icp_text, selected_tools=selected_tools)
             st.success(f"Industries: {', '.join(icp_data['industries'])} | Geographies: {', '.join(icp_data['geographies'])}")
         except Exception as e:
-            st.error(f"ICP parsing failed: {str(e)}")
+            st.error(f"ICP parsing failed: {format_error_message(str(e))}")
             st.stop()
 
     # Step 2
     st.subheader("Step 2: Generating Queries")
     with st.spinner("Generating buyer queries..."):
         try:
-            from core import query_generator
-            for cat in query_generator.QUERY_CATEGORIES:
-                cat["count"] = num_queries
-
             competitors_list = [c.strip() for c in competitors_input.split(",")] if competitors_input else []
             query_backends = []
             if "Groq_Llama3" in selected_tools or "Groq_Mixtral" in selected_tools:
@@ -317,7 +345,7 @@ if run_btn:
             )
             st.success(f"Generated {len(queries)} queries")
         except Exception as e:
-            st.error(f"Query generation failed: {str(e)}")
+            st.error(f"Query generation failed: {format_error_message(str(e))}")
             st.stop()
 
     # Step 3
@@ -327,14 +355,41 @@ if run_btn:
     progress_bar = st.progress(0)
     status_text = st.empty()
     call_count = 0
+    exhausted_tools = set()
+    exhausted_notices_shown = set()
 
     for i, q in enumerate(queries):
         status_text.text(f"Query {i+1}/{len(queries)}: {q['query'][:65]}...")
-        tool_responses = run_selected_tools(q["query"], selected_tools)
+        active_tools = [t for t in selected_tools if t not in exhausted_tools]
+        if not active_tools:
+            st.warning("All selected tools are currently rate-limited or out of quota. Stopping run early.")
+            break
+
+        tool_responses = run_selected_tools(q["query"], active_tools)
 
         for tool_name, response_text in tool_responses.items():
             if response_text.startswith("ERROR"):
-                st.warning(f"{tool_name} error on query {i+1}")
+                clean_error = response_text.split("ERROR:", 1)[-1].strip()
+                formatted_error = format_error_message(clean_error)
+
+                error_low = clean_error.lower()
+                is_quota_error = (
+                    "429" in error_low
+                    or "rate_limit" in error_low
+                    or "resource_exhausted" in error_low
+                    or "quota" in error_low
+                )
+                if is_quota_error:
+                    exhausted_tools.add(tool_name)
+                    if tool_name not in exhausted_notices_shown:
+                        st.warning(
+                            f"{tool_name} disabled for this run: {formatted_error}"
+                        )
+                        exhausted_notices_shown.add(tool_name)
+                else:
+                    st.warning(
+                        f"{tool_name} error on query {i+1}: {formatted_error}"
+                    )
                 continue
 
             brand_data = detect_brands(response_text, brand_name)
@@ -431,6 +486,7 @@ if run_btn:
             "Category": r["category"].replace("_", " ").title(),
             "Tool": r["tool"],
             "Query": r["query"],
+            "Answer": r["response"],
             "Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
             "Position": r["brands_detected"]["target_position"] or "-",
             "Context": r["brands_detected"]["target_context"],

@@ -11,6 +11,7 @@ GEMINI_MODELS = [
     "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
 ]
+TARGET_QUERY_COUNT = 10
 
 QUERY_CATEGORIES = [
     {"name": "awareness", "count": 5},
@@ -181,7 +182,7 @@ Each query MUST include at least 5 of these filter dimensions. Vary filters so n
 - Every query must feel like it belongs in a Reddit thread or Slack community
 
 ## OUTPUT FORMAT
-Return a JSON array of exactly 25 objects. Each object:
+Return a JSON array of exactly 10 objects. Each object:
 {{
   "query_id": 1,
   "query": "<natural buyer language>",
@@ -229,7 +230,7 @@ Return ONLY the JSON array. No preamble. No explanation. No markdown fences."""
             raise RuntimeError(f"Could not parse query JSON. Raw:\n{raw[:500]}")
 
     normalized = []
-    for q in queries:
+    for q in queries[:TARGET_QUERY_COUNT]:
         normalized.append({
             "query": q["query"],
             "category": q["buying_stage"],
