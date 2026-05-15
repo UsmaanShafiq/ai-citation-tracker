@@ -359,6 +359,16 @@ if run_btn:
     exhausted_tools = set()
     exhausted_notices_shown = set()
 
+# Detect business type once before running queries
+    detected_business_type = "service" if any(
+        s in icp_text.lower()
+        for s in ["agency", "consultancy", "retainer", "we write", 
+                  "content partner", "studio", "not a software", 
+                  "service business"]
+    ) else "software"
+
+    st.caption(f"Business type detected: {detected_business_type}")
+
     for i, q in enumerate(queries):
         status_text.text(f"Query {i+1}/{len(queries)}: {q['query'][:65]}...")
         active_tools = [t for t in selected_tools if t not in exhausted_tools]
@@ -393,7 +403,19 @@ if run_btn:
                     )
                 continue
 
-            brand_data = detect_brands(response_text, brand_name)
+           # Detect once outside the loop for efficiency
+            detected_type = "service" if any(
+                s in icp_text.lower() 
+                for s in ["agency", "consultancy", "retainer", "we write", "content partner", "studio"]
+            ) else "software"
+
+            brand_data = detect_brands(
+                 response_text,
+                brand_name,
+                icp_text=icp_text,
+                business_type=detected_business_type
+            )
+
             all_results.append({
                 "query": q["query"],
                 "category": q["category"],
