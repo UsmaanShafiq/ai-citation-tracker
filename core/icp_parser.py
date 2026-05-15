@@ -94,7 +94,11 @@ def parse_icp_with_groq(icp_text: str) -> dict:
 def build_prompt(icp_text: str) -> str:
     return f"""You are a B2B marketing analyst. Extract structured buyer profile data from the ICP document below.
 
-Return ONLY valid JSON. No explanation. No markdown fences. No extra text.
+        IMPORTANT: This company is a SERVICE BUSINESS, not a software product.
+        Queries must reflect someone looking for an agency, consultant, or service provider.
+        NOT someone looking for a software tool or platform.
+
+        Return ONLY valid JSON. No explanation. No markdown fences. No extra text.
 
 Format exactly like this:
 {{

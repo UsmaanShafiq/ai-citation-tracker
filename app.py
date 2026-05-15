@@ -339,6 +339,7 @@ if run_btn:
 
             queries = generate_all_queries(
                 icp_data,
+                company_name=brand_name,
                 competitors=competitors_list,
                 preferred_backend=query_backends[0],
                 allowed_backends=query_backends
