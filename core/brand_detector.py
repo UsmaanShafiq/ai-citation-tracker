@@ -5,8 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
 # =============================================================================
 # BUSINESS TYPE DETECTION
 # =============================================================================
@@ -136,6 +134,7 @@ AI Response to analyze:
 """
 
     try:
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         result = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
