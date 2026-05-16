@@ -13,8 +13,6 @@ GEMINI_MODELS = [
     "gemini-1.5-flash-latest",
 ]
 
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
 # =============================================================================
 # USAGE TRACKER
 # =============================================================================
@@ -55,10 +53,11 @@ def reset_usage_stats():
 def run_on_groq_llama(query: str) -> str:
     for attempt in range(3):
         try:
+            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
             response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant answering questions about business software. Always mention specific product names and brands in your recommendations."},
+                    {"role": "system", "content": "You are a helpful assistant. When someone asks about finding an agency, consultant, or service provider, recommend ONLY agency and service provider names. Do not recommend software tools or SaaS products unless the question is specifically about software."},
                     {"role": "user", "content": query}
                 ],
                 max_tokens=800,
@@ -78,10 +77,11 @@ def run_on_groq_llama(query: str) -> str:
 
 def run_on_groq_mixtral(query: str) -> str:
     try:
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         response = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": "You are a software consultant. Always mention specific product names and brands in your recommendations."},
+                {"role": "system", "content": "You are a helpful assistant. When someone asks about finding an agency, consultant, or service provider, recommend ONLY agency and service provider names. Do not recommend software tools or SaaS products unless the question is specifically about software."},
                 {"role": "user", "content": query}
             ],
             max_tokens=800,
