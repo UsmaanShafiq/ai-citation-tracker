@@ -306,3 +306,101 @@ Return ONLY the JSON array. No preamble. No explanation. No markdown fences."""
         })
 
     return normalized
+
+def generate_queries_for_topic(
+    topic: str,
+    icp_data: dict,
+    company_name: str = "",
+    competitors: list = None,
+    queries_per_topic: int = 5,
+    geography: str = "United States",
+    preferred_backend: str = "groq",
+    allowed_backends: list = None
+) -> list:
+    """
+    Generates queries for a single topic using ICP as context.
+    Returns list of query objects tagged with the topic.
+    """
+    competitors_text = ", ".join(competitors) if competitors else "not specified"
+
+    icp_formatted = f"""
+Industries: {', '.join(icp_data.get('industries', []))}
+Company sizes: {', '.join(icp_data.get('company_sizes', []))}
+Geographies: {geography}
+Buyer roles: {', '.join(icp_data.get('buyer_roles', []))}
+Pain points: {', '.join(icp_data.get('pain_points', []))}
+Budget ranges: {', '.join(icp_data.get('budget_ranges', []))}
+Company stages: {', '.join(icp_data.get('company_stages', []))}
+"""
+
+    prompt = f"""You are an expert B2B market researcher. Generate exactly {queries_per_topic} highly specific buyer queries for the topic below.
+
+Company: {company_name}
+Topic: {topic}
+Geography: {geography}
+Competitors: {competitors_text}
+
+ICP Context:
+{icp_formatted}
+
+CRITICAL RULES:
+- Every query must be specifically about the topic: "{topic}"
+- Queries must sound like a real buyer typed them into Reddit, Slack, or ChatGPT
+- Do NOT mention {company_name} in any query
+- Use buyer language, not marketing language
+- Each query must feel different, covering different angles of the topic
+- Span different buying stages: pain_aware, solution_aware, provider_evaluating, proof_seeking, decision_ready
+- Include geography "{geography}" naturally in at least 2 queries
+- If competitors provided, mention them naturally in at least 1 query
+
+Return a JSON array of exactly {queries_per_topic} objects:
+[
+  {{
+    "query_id": 1,
+    "query": "<natural buyer language query about {topic}>",
+    "buying_stage": "<pain_aware | solution_aware | provider_evaluating | proof_seeking | decision_ready>",
+    "filters_applied": {{
+      "geography": "<value or null>",
+      "company_size": "<value or null>",
+      "industry_vertical": "<value or null>",
+      "persona": "<value or null>",
+      "pain_point": "<value or null>",
+      "emotional_state": "<value or null>"
+    }},
+    "filter_count": 5,
+    "rationale": "<why a real buyer would search this>"
+  }}
+]
+
+Return ONLY the JSON array. No explanation. No markdown fences."""
+
+    raw = call_llm(prompt, preferred_backend=preferred_backend, allowed_backends=allowed_backends)
+
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        lines = [l for l in lines if not l.startswith("```")]
+        raw = "\n".join(lines).strip()
+
+    try:
+        queries = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("[")
+        end = raw.rfind("]") + 1
+        if start != -1 and end > start:
+            queries = json.loads(raw[start:end])
+        else:
+            raise RuntimeError(f"Could not parse topic query JSON. Raw:\n{raw[:300]}")
+
+    normalized = []
+    for q in queries[:queries_per_topic]:
+        normalized.append({
+            "query": q["query"],
+            "category": q.get("buying_stage", "solution_aware"),
+            "topic": topic,
+            "filters": q.get("filters_applied", {}),
+            "filter_count": q.get("filter_count", 5),
+            "rationale": q.get("rationale", ""),
+            "query_id": q.get("query_id", 0)
+        })
+
+    return normalized

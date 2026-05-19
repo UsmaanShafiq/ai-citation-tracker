@@ -8,11 +8,10 @@ load_dotenv()
 sys.path.append(os.path.dirname(__file__))
 
 from core.icp_parser import parse_and_validate
-from core.query_generator import generate_all_queries, generate_queries_for_topic
-from core.scorer import calculate_citation_share, calculate_citation_share_by_topic
+from core.query_generator import generate_all_queries
 from core.ai_runner import ALL_TOOLS, run_selected_tools, check_key_exists, get_usage_stats, reset_usage_stats
 from core.brand_detector import detect_brands
-
+from core.scorer import calculate_citation_share
 
 
 def format_error_message(raw_error: str) -> str:
@@ -84,22 +83,6 @@ with st.sidebar:
         placeholder="Concurate"
     )
 
-    geography = st.selectbox(
-        "Target Geography",
-        options=[
-            "United States",
-            "United States & Canada",
-            "United Kingdom",
-            "Australia",
-            "Global",
-            "Europe",
-            "Southeast Asia",
-            "Middle East",
-        ],
-        index=0,
-        help="Default is United States. Queries will be grounded in this geography."
-    )
-
     icp_text = st.text_area(
         "ICP Document",
         height=180,
@@ -109,66 +92,6 @@ with st.sidebar:
     competitors_input = st.text_input(
         "Competitors (optional)",
         placeholder="Animalz, Siege Media, Grow and Convert"
-    )
-
-    st.divider()
-
-    business_type_option = st.selectbox(
-        "Business Type",
-        options=[
-            "Auto Detect",
-            "Agency / Consultancy / Service",
-            "SaaS / Software Product",
-            "Marketplace",
-            "Other",
-        ],
-        help="Controls what counts as a competitor. Agency mode excludes software tools like HubSpot, Ahrefs etc."
-    )
-
-    st.divider()
-
-    st.subheader("Topics")
-    st.caption("Add topics to track. The tool generates queries per topic using your ICP as context.")
-
-    if "topics" not in st.session_state:
-        st.session_state.topics = []
-
-    new_topic = st.text_input(
-        "Add topic",
-        placeholder="e.g. B2B content agency for SaaS",
-        key="new_topic_input"
-    )
-
-    col_add, col_clear = st.columns([1, 1])
-    with col_add:
-        if st.button("+ Add Topic", use_container_width=True):
-            if new_topic.strip() and new_topic.strip() not in st.session_state.topics:
-                st.session_state.topics.append(new_topic.strip())
-                st.rerun()
-
-    with col_clear:
-        if st.button("Clear All", use_container_width=True):
-            st.session_state.topics = []
-            st.rerun()
-
-    if st.session_state.topics:
-        for i, topic in enumerate(st.session_state.topics):
-            col_t, col_x = st.columns([4, 1])
-            with col_t:
-                st.caption(f"• {topic}")
-            with col_x:
-                if st.button("✕", key=f"del_topic_{i}"):
-                    st.session_state.topics.pop(i)
-                    st.rerun()
-    else:
-        st.caption("No topics added. Tool will auto-generate queries from ICP only.")
-
-    queries_per_topic = st.slider(
-        "Queries per topic",
-        min_value=3,
-        max_value=8,
-        value=5,
-        help="Number of queries generated per topic"
     )
 
     st.divider()
@@ -389,9 +312,6 @@ if run_btn:
         st.error("Please select at least one AI tool.")
         st.stop()
 
-    # Define competitors_list before any step uses it
-    competitors_list = [c.strip() for c in competitors_input.split(",") if c.strip()] if competitors_input else []
-
     # Step 1
     st.subheader("Step 1: Parsing ICP")
     with st.spinner("Extracting structured data..."):
@@ -406,6 +326,7 @@ if run_btn:
     st.subheader("Step 2: Generating Queries")
     with st.spinner("Generating buyer queries..."):
         try:
+            competitors_list = [c.strip() for c in competitors_input.split(",")] if competitors_input else []
             query_backends = []
             if "Groq_Llama3" in selected_tools or "Groq_Mixtral" in selected_tools:
                 query_backends.append("groq")
@@ -416,34 +337,14 @@ if run_btn:
                 st.error("No selected tools can generate queries. Enable Groq or Gemini.")
                 st.stop()
 
-            queries = []
-
-            # Generate topic-based queries if topics exist
-            if st.session_state.get("topics"):
-                for topic in st.session_state.topics:
-                    topic_queries = generate_queries_for_topic(
-                        topic=topic,
-                        icp_data=icp_data,
-                        company_name=brand_name,
-                        competitors=competitors_list,
-                        queries_per_topic=queries_per_topic,
-                        geography=geography,
-                        preferred_backend=query_backends[0],
-                        allowed_backends=query_backends
-                    )
-                    queries.extend(topic_queries)
-                    st.write(f"Generated {len(topic_queries)} queries for topic: {topic}")
-            else:
-                # Fall back to ICP-based auto generation
-                queries = generate_all_queries(
-                    icp_data,
-                    company_name=brand_name,
-                    competitors=competitors_list,
-                    preferred_backend=query_backends[0],
-                    allowed_backends=query_backends
-                )
-
-            st.success(f"Generated {len(queries)} queries total")
+            queries = generate_all_queries(
+                icp_data,
+                company_name=brand_name,
+                competitors=competitors_list,
+                preferred_backend=query_backends[0],
+                allowed_backends=query_backends
+            )
+            st.success(f"Generated {len(queries)} queries")
         except Exception as e:
             st.error(f"Query generation failed: {format_error_message(str(e))}")
             st.stop()
@@ -458,23 +359,15 @@ if run_btn:
     exhausted_tools = set()
     exhausted_notices_shown = set()
 
-    # Determine business type from frontend selection
-    if business_type_option == "Auto Detect":
-        detected_business_type = "service" if any(
-            s in icp_text.lower()
-            for s in ["agency", "consultancy", "retainer", "we write",
-                      "content partner", "studio", "not a software",
-                      "service business"]
-        ) else "software"
-    elif business_type_option == "Agency / Consultancy / Service":
-        detected_business_type = "service"
-    elif business_type_option == "SaaS / Software Product":
-        detected_business_type = "software"
-    else:
-        detected_business_type = "other"
+# Detect business type once before running queries
+    detected_business_type = "service" if any(
+        s in icp_text.lower()
+        for s in ["agency", "consultancy", "retainer", "we write", 
+                  "content partner", "studio", "not a software", 
+                  "service business"]
+    ) else "software"
 
-    competitors_list = [c.strip() for c in competitors_input.split(",") if c.strip()] if competitors_input else []
-    st.caption(f"Business type: {detected_business_type} | Geography: {geography}")
+    st.caption(f"Business type detected: {detected_business_type}")
 
     for i, q in enumerate(queries):
         status_text.text(f"Query {i+1}/{len(queries)}: {q['query'][:65]}...")
@@ -517,11 +410,10 @@ if run_btn:
             ) else "software"
 
             brand_data = detect_brands(
-                response_text,
+                 response_text,
                 brand_name,
                 icp_text=icp_text,
-                business_type=detected_business_type,
-                user_competitors=competitors_list
+                business_type=detected_business_type
             )
 
             all_results.append({
@@ -565,32 +457,15 @@ if run_btn:
         })
     st.dataframe(pd.DataFrame(tool_rows), use_container_width=True, hide_index=True)
 
-    st.subheader("Citation Share by Buying Stage")
+    st.subheader("Citation Share by Category")
     cat_rows = []
     for cat, data in scores["citation_share_by_category"].items():
         cat_rows.append({
-            "Stage": cat.replace("_", " ").title(),
+            "Category": cat.replace("_", " ").title(),
             "Citation Share": f"{data['share_pct']}%",
             "Mentions": f"{data['mentions']}/{data['total_queries']}"
         })
-    if cat_rows:
-        st.dataframe(pd.DataFrame(cat_rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("No category data available.")
-
-    # Topic-based results
-    if st.session_state.get("topics"):
-        st.subheader("Citation Share by Topic")
-        topic_scores = calculate_citation_share_by_topic(all_results, brand_name)
-        topic_rows = []
-        for topic, data in topic_scores.items():
-            topic_rows.append({
-                "Topic": topic,
-                "Citation Share": f"{data['share_pct']}%",
-                "Mentions": f"{data['mentions']}/{data['total_queries']}"
-            })
-        if topic_rows:
-            st.dataframe(pd.DataFrame(topic_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(cat_rows), use_container_width=True, hide_index=True)
 
     st.subheader("Top Competitor Brands")
     if scores["competitor_ranking"]:
@@ -631,10 +506,10 @@ if run_btn:
     rows = []
     for r in all_results:
         rows.append({
-            "Topic": r.get("topic", "Auto"),
-            "Stage": r["category"].replace("_", " ").title(),
+            "Category": r["category"].replace("_", " ").title(),
             "Tool": r["tool"],
             "Query": r["query"],
+            "Answer": r["response"],
             "Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
             "Position": r["brands_detected"]["target_position"] or "-",
             "Context": r["brands_detected"]["target_context"],

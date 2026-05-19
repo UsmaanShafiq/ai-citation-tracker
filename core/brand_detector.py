@@ -174,13 +174,24 @@ def detect_brands(
     response_text: str,
     target_brand: str,
     icp_text: str = "",
-    business_type: str = None
+    business_type: str = None,
+    user_competitors: list = None,
+    custom_exclusions: list = None
 ) -> dict:
     """
     Main function. Auto-detects business type and runs both passes.
+    user_competitors: brands entered by user in frontend - always included
+    custom_exclusions: brands entered by user to exclude
     """
     if business_type is None:
         business_type = detect_business_type(icp_text, target_brand)
+
+    # Add user competitors to known brands list temporarily
+    if user_competitors:
+        for comp in user_competitors:
+            comp_clean = comp.strip()
+            if comp_clean and comp_clean not in KNOWN_SERVICE_BRANDS:
+                KNOWN_SERVICE_BRANDS.append(comp_clean)
 
     string_matches = pass_one_string_match(response_text, business_type)
     llm_result = pass_two_llm_detection(response_text, target_brand, business_type)
@@ -194,6 +205,11 @@ def detect_brands(
     if business_type == "service":
         exclude_lower = [t.lower() for t in SOFTWARE_TOOLS_TO_EXCLUDE]
         all_brands = [b for b in all_brands if b.lower() not in exclude_lower]
+
+    # Apply custom exclusions from frontend
+    if custom_exclusions:
+        custom_lower = [t.lower() for t in custom_exclusions]
+        all_brands = [b for b in all_brands if b.lower() not in custom_lower]
 
     target_in_string = any(
         target_brand.lower() in b.lower() or b.lower() in target_brand.lower()

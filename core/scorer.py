@@ -15,7 +15,7 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
     """
 
     tools = list(set(r["tool"] for r in results))
-    categories = ["awareness", "comparison", "pain_point", "buying_intent", "specific_filter"]
+    categories = ["pain_aware", "solution_aware", "provider_evaluating", "proof_seeking", "decision_ready"]
 
     # ─── Overall citation share per tool ─────────────────────────────────────
     tool_totals = defaultdict(int)
@@ -54,13 +54,29 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
         }
 
     # ─── Competitor brand frequency ───────────────────────────────────────────
+    SOFTWARE_EXCLUDE = {
+        "hubspot", "ahrefs", "semrush", "google", "google analytics",
+        "salesforce", "marketo", "wordpress", "trello", "asana",
+        "notion", "hootsuite", "buffer", "moz", "clearscope",
+        "marketmuse", "coschedule", "mailchimp", "activecampaign",
+        "pardot", "monday", "clickup", "slack", "microsoft",
+        "zoom", "webflow", "squarespace", "quickbooks", "stripe",
+        "intercom", "zendesk", "linkedin", "twitter", "facebook",
+        "instagram", "youtube", "canva", "sprout social", "buzzstream",
+        "contentful", "upwork", "clutch", "goodfirms", "paypal",
+        "square", "shopify", "woocommerce", "magento", "freshdesk",
+        "servicenow", "zoho", "pipedrive", "reddit", "tiktok",
+    }
+
     competitor_counts = defaultdict(int)
     for r in results:
         for brand in r["brands_detected"]["all_brands"]:
-            # Normalize brand name slightly
             brand_clean = brand.strip()
-            if brand_clean.lower() != target_brand.lower():
-                competitor_counts[brand_clean] += 1
+            if brand_clean.lower() == target_brand.lower():
+                continue
+            if brand_clean.lower() in SOFTWARE_EXCLUDE:
+                continue
+            competitor_counts[brand_clean] += 1
 
     # Sort by frequency
     competitor_ranking = sorted(
@@ -220,3 +236,26 @@ if __name__ == "__main__":
     score = calculate_citation_share(sample_results, "ServiceTitan")
     report = format_report(score)
     print(report)
+
+def calculate_citation_share_by_topic(results: list, target_brand: str) -> dict:
+    """
+    Groups results by topic and calculates citation share per topic.
+    """
+    from collections import defaultdict
+    topic_groups = defaultdict(list)
+    for r in results:
+        topic = r.get("topic", "General")
+        topic_groups[topic].append(r)
+
+    topic_scores = {}
+    for topic, topic_results in topic_groups.items():
+        total = len(topic_results)
+        mentions = sum(1 for r in topic_results if r["brands_detected"]["target_mentioned"])
+        share = round((mentions / total) * 100) if total > 0 else 0
+        topic_scores[topic] = {
+            "total_queries": total,
+            "mentions": mentions,
+            "share_pct": share
+        }
+
+    return topic_scores
