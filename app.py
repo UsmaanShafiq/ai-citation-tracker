@@ -527,6 +527,7 @@ if run_btn:
             all_results.append({
                 "query": q["query"],
                 "category": q["category"],
+                "topic": q.get("topic", "Auto"),
                 "filters": q["filters"],
                 "tool": tool_name,
                 "response": response_text,
