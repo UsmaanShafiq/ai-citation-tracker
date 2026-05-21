@@ -111,6 +111,12 @@ with st.sidebar:
         placeholder="Animalz, Siege Media, Grow and Convert"
     )
 
+    target_keywords_input = st.text_input(
+        "Target Keywords (optional)",
+        placeholder="B2B SaaS SEO Agency, B2B SaaS GEO Agency",
+        help="Phrases you want to appear in AI answers for. Weaved naturally into queries."
+    )
+
     st.divider()
 
     business_type_option = st.selectbox(
@@ -389,8 +395,9 @@ if run_btn:
         st.error("Please select at least one AI tool.")
         st.stop()
 
-    # Define competitors_list before any step uses it
+    # Define competitors_list and target_keywords_list before any step uses it
     competitors_list = [c.strip() for c in competitors_input.split(",") if c.strip()] if competitors_input else []
+    target_keywords_list = [k.strip() for k in target_keywords_input.split(",") if k.strip()] if target_keywords_input else []
 
     # Step 1
     st.subheader("Step 1: Parsing ICP")
@@ -428,6 +435,8 @@ if run_btn:
                         competitors=competitors_list,
                         queries_per_topic=queries_per_topic,
                         geography=geography,
+                        business_type=business_type_option if business_type_option != "Auto Detect" else "",
+                        target_keywords=target_keywords_list,
                         preferred_backend=query_backends[0],
                         allowed_backends=query_backends
                     )
@@ -439,6 +448,9 @@ if run_btn:
                     icp_data,
                     company_name=brand_name,
                     competitors=competitors_list,
+                    business_type=business_type_option if business_type_option != "Auto Detect" else "",
+                    target_keywords=target_keywords_list,
+                    geography=geography,
                     preferred_backend=query_backends[0],
                     allowed_backends=query_backends
                 )
@@ -529,6 +541,7 @@ if run_btn:
                 "category": q["category"],
                 "topic": q.get("topic", "Auto"),
                 "filters": q["filters"],
+                "target_keyword_used": q.get("target_keyword_used"),
                 "tool": tool_name,
                 "response": response_text,
                 "brands_detected": brand_data
@@ -636,6 +649,7 @@ if run_btn:
             "Stage": r["category"].replace("_", " ").title(),
             "Tool": r["tool"],
             "Query": r["query"],
+            "Keyword Used": r.get("target_keyword_used") or "-",
             "Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
             "Position": r["brands_detected"]["target_position"] or "-",
             "Context": r["brands_detected"]["target_context"],

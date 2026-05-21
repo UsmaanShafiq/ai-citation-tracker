@@ -15,7 +15,7 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
     """
 
     tools = list(set(r["tool"] for r in results))
-    categories = ["pain_aware", "solution_aware", "provider_evaluating", "proof_seeking", "decision_ready"]
+    categories = ["provider_evaluating", "proof_seeking", "decision_ready"]
 
     # ─── Overall citation share per tool ─────────────────────────────────────
     tool_totals = defaultdict(int)

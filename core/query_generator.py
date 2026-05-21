@@ -11,14 +11,12 @@ GEMINI_MODELS = [
     "gemini-1.5-flash-latest",
 ]
 
-TARGET_QUERY_COUNT = 10
+TARGET_QUERY_COUNT = 25
 
 QUERY_CATEGORIES = [
-    {"name": "pain_aware", "count": 5},
-    {"name": "solution_aware", "count": 5},
-    {"name": "provider_evaluating", "count": 5},
-    {"name": "proof_seeking", "count": 5},
-    {"name": "decision_ready", "count": 5},
+    {"name": "provider_evaluating", "count": 9},
+    {"name": "proof_seeking", "count": 8},
+    {"name": "decision_ready", "count": 8},
 ]
 
 
@@ -111,16 +109,23 @@ def generate_all_queries(
     company_name: str = "",
     website_url: str = None,
     competitors: list = None,
+    business_type: str = "",
+    target_keywords: list = None,
+    geography: str = "United States",
     preferred_backend: str = "groq",
     allowed_backends: list = None
 ) -> list:
 
     competitors_text = ", ".join(competitors) if competitors else "not specified"
+    keywords_text = ", ".join(target_keywords) if target_keywords else "not specified"
+
+    # Use geography from parameter, fall back to ICP data
+    geo = geography or ", ".join(icp_data.get("geographies", ["United States"]))
 
     icp_formatted = f"""
 Industries: {', '.join(icp_data.get('industries', []))}
 Company sizes: {', '.join(icp_data.get('company_sizes', []))}
-Geographies: {', '.join(icp_data.get('geographies', []))}
+Geographies: {geo}
 Buyer roles: {', '.join(icp_data.get('buyer_roles', []))}
 Pain points: {', '.join(icp_data.get('pain_points', []))}
 Budget ranges: {', '.join(icp_data.get('budget_ranges', []))}
@@ -129,126 +134,149 @@ Company stages: {', '.join(icp_data.get('company_stages', []))}
 Compliance needs: {', '.join(icp_data.get('compliance_needs', []))}
 """
 
-    prompt = f"""You are an expert B2B market researcher and buyer behavior analyst. Your job is to generate hyper-specific AI search queries that real buyers type when searching for solutions in {company_name}'s category which may be software, a service, an agency, a marketplace, or something else entirely. Do not assume the category. Infer it from the inputs.
+    business_type_instruction = ""
+    if business_type and business_type.strip() and business_type.lower() not in ["auto detect", "not specified", ""]:
+        business_type_instruction = f"""**Business Type:** {business_type}
+(This field is provided. Accept it as ground truth. Do not override or reinterpret it. Build your entire understanding of the buying motion, vocabulary, and filter dimensions around this business type.)"""
+    else:
+        business_type_instruction = f"""**Business Type:** not specified
+(Infer the business type from the ICP and company name before generating any queries.)"""
 
-CRITICAL INSTRUCTION: Read the ICP carefully before generating 
-any query. If the company is an agency, consultancy, or service 
-business, every single query must reflect someone looking to HIRE 
-a service provider, not buy software. Generating software-buying 
-queries for a service business is a complete failure of this task.
+    keyword_instruction = ""
+    if target_keywords:
+        keyword_instruction = f"""
+## TARGET KEYWORDS
+These are the specific phrases the user wants {company_name} to be discovered for in AI-generated answers:
+{keywords_text}
+
+Weave these keywords naturally into queries where they fit the buyer language and context.
+Do not force them into every query. Use them where a real buyer would actually use that phrase.
+Aim for meaningful coverage: each keyword should appear across multiple queries in natural varied forms.
+Never make a query feel constructed around a keyword. The buyer situation and specificity must always come first.
+"""
+
+    prompt = f"""You are an expert B2B market researcher and buyer behavior analyst. Your job is to generate hyper-specific, bottom-of-the-funnel AI search queries that real buyers type when they are close to making a purchase decision in {company_name}'s category.
 
 ## INPUTS
-Company Name: {company_name}
-Ideal Client Profile (ICP): {icp_formatted}
-Competitor Names (optional): {competitors_text}
+**Company Name:** {company_name}
 
-## STEP 1 — UNDERSTAND THE BUSINESS CONTEXT BEFORE ANYTHING ELSE
+**Ideal Client Profile (ICP):**
+{icp_formatted}
 
-Before generating a single query, answer these four questions internally. Your entire query generation must be grounded in these answers.
+{business_type_instruction}
 
-1. What is {company_name} actually selling?
-Is it a software product, a professional service, a managed service, a marketplace, a community, a content product, or something else? Do not assume. Read the ICP carefully.
+**Competitor Names (optional):** {competitors_text}
+{keyword_instruction}
 
+## STEP 1 — ESTABLISH BUSINESS CONTEXT
+
+{"Accept the provided business type as ground truth. Do not second-guess or reinterpret it. Build your entire understanding of the buying motion, vocabulary, and filter dimensions around this business type." if business_type and business_type.strip() and business_type.lower() not in ["auto detect", "not specified", ""] else f"""Infer the business type by answering these questions internally before proceeding:
+1. What is {company_name} actually selling — a software product, a professional service, an agency offering, a managed service, a marketplace, or something else? Read the ICP carefully. Do not assume.
 2. How does buying actually happen in this category?
-Software: buyer searches for tools, compares on G2, does trials.
-Agency or consulting: buyer searches for expertise, checks case studies, asks for referrals, evaluates thought leadership.
-Managed service: buyer searches for outcomes not features.
-Think through the actual decision journey for THIS category. Who gets involved? How long does it take? What triggers the search?
+   - Software: buyer compares tools, does trials, checks G2, evaluates pricing tiers
+   - Agency or consulting: buyer evaluates expertise, reads case studies, asks for referrals, judges thought leadership
+   - Managed service: buyer focuses on outcomes and reliability, not features
+3. What language does the buyer actually use when they are this close to a decision?
+4. Which filter dimensions are irrelevant for this business type and should be dropped entirely?
+Complete this reasoning before touching query generation."""}
 
-3. What does the buyer actually type into an AI or search engine?
-A buyer looking for a content marketing agency does not search for software with editorial calendar features. They search for content agency that understands B2B SaaS or who writes good long-form content for developer tools companies. Ground all queries in the vocabulary of THIS buying motion.
+## STEP 2 — BOTTOM-OF-FUNNEL ONLY
 
-4. Which filter dimensions are irrelevant for this business type?
-If {company_name} is a service business, filters like needs SSO, requires API access, or SOC 2 compliance are meaningless. Drop them. Replace with dimensions that actually apply: engagement model preference, output quality bar, cultural fit, past agency experience.
+Every single query in this output must reflect a buyer who is close to a purchase decision. This is not awareness. This is not education. This is a buyer who has already done their research and is now in one of these three modes:
 
-Only proceed to query generation after completing this reasoning.
+**provider_evaluating** — actively comparing specific companies, approaches, or options side by side
+**proof_seeking** — looking for validation that a specific solution will work for their exact situation before committing
+**decision_ready** — essentially ready to buy, doing final checks, looking for confirmation or a nudge
 
-## STEP 2 — INHABIT THE BUYER'S WORLD
+Do not generate queries for pain_aware or solution_aware stages. If a query sounds like the buyer is still figuring out what they need, it does not belong in this output.
 
-1. This is a real person, frustrated, time-pressured, skeptical of vendor marketing.
-2. Think Reddit, G2, LinkedIn comments, Slack communities. Use their vocabulary not seller vocabulary. Buyers say our content is getting zero traction not we need a content strategy partner.
-3. Queries must span all five buying stages. Do not cluster them in one stage.
+Signs a query is genuinely bottom-of-funnel:
+- It names or implies specific options being compared
+- It asks for proof, references, case studies, or outcomes for a specific context
+- It asks what others in a very specific situation actually chose
+- It carries the weight of an imminent decision ("we need to decide by end of quarter," "about to sign," "final shortlist")
+- It is specific enough that a generic answer would not satisfy it
 
-## BUYING STAGE TAXONOMY
-- pain_aware: they know something is wrong, not sure what the solution looks like
-- solution_aware: they know the category of solution, searching for options
-- provider_evaluating: actively comparing specific companies or approaches
-- proof_seeking: looking for evidence it works for their specific situation
-- decision_ready: close to committing, doing final validation
+## STEP 3 — INHABIT THE BUYER AT DECISION TIME
+
+This buyer has already gone through awareness and consideration. They have probably talked to vendors, sat through demos, and read reviews. They are now trying to answer one of these underlying questions:
+- "Is this the right choice for my exact situation?"
+- "Has anyone like me done this and did it work?"
+- "What am I missing before I commit?"
+- "Is option A actually better than option B for a company like mine?"
+- "What do people say about this when they are not trying to sell me something?"
+
+Channel how this buyer would phrase these on Reddit, in a Slack community, on G2, or directly to an AI assistant. Use their words, their doubts, their specific context. Not seller language.
 
 ## FILTER DIMENSIONS
-Each query MUST include at least 5 filter dimensions. Choose filters relevant to how buying happens for THIS business. Vary filters across queries so no two feel alike.
 
-Universal filters for any business:
-- geography
-- company_size
-- industry_vertical
-- persona
-- pain_point
-- trigger
-- emotional_state
-- situational_context
+Each query MUST include at least 5 filter dimensions. Only use filters meaningful for the confirmed or inferred business type. Vary combinations across queries so no two feel alike.
 
-For agencies and professional services use these:
-- engagement_model: retainer vs project, embedded vs advisory, long-term vs one-off
-- outcome_focus: pipeline generation, thought leadership, category creation, brand credibility
-- past_experience: never hired agency before, burned by bad agency, in-house team failed
-- capability_gap: no writer on team, founder doing it all, content team too junior, no strategic layer
-- proof_signal: wants case studies in specific niche, needs references, judges by published work
-- competitor_context: comparing agency X vs agency Y, debating agency vs hiring in-house
+### Universal Filters
+- Geography
+- Company Size / Stage
+- Industry Vertical
+- Job Title / Persona
+- Pain Point (the specific frustration that has brought them to the edge of a decision)
+- Trigger / Timing (end of quarter, after a failed hire, post-funding, contract renewal coming up)
+- Emotional State (tired of waiting, under pressure to show results, anxious about making the wrong call)
+- Situational Context
 
-For software products use these instead:
-- budget_signal
-- feature_need
-- integration_need
-- competitor_context
+### For Software / SaaS Products
+- Team Size
+- Budget Signal (approved budget of X, cost-per-seat concern, switching cost consideration)
+- Feature Need
+- Integration Need
+- Competitor Context (head-to-head comparison, migration from a specific tool, shortlist of two)
+
+### For Agencies / Consulting / Professional Services
+- Engagement Model (retainer vs project-based, embedded vs advisory, trial project before committing)
+- Outcome / Proof Focus (pipeline results, content that ranked, clients they have worked with in this niche)
+- Past Experience with Category (burned by a previous agency, first time outsourcing, had bad content before)
+- Internal Capability Gap (no writer internally, founder has been doing it and cannot scale, junior team needs senior oversight)
+- Cultural / Execution Fit (needs someone who understands technical buyers, wants strategic input not just execution)
+- Proof / Trust Signal (wants to see work in their specific vertical, checking references, evaluating thought leadership quality)
+- Competitor Context (comparing two agencies, weighing agency vs in-house hire, evaluating a shortlist)
 
 ## QUERY CONSTRUCTION RULES
-- Must read like a human typing to an AI, not a keyword string
-- Use buyer language not seller language
-- No robust, seamless, end-to-end, best-in-class, strategic partner anywhere
-- At least 5 queries reference a competitor naturally within the query if competitors were provided
-- At least 3 queries carry emotional language: sick of, fed up, nothing seems to work, keeps falling apart
-- At least 4 queries are late-stage high-intent: provider_evaluating, proof_seeking, or decision_ready
-- Span at least 4 different industry verticals plausible for this ICP
-- No two queries have the same filter combination
-- Do NOT mention {company_name} in any query
-- Every query feels like a Reddit thread, Slack message, or real AI conversation
+
+- Every query must be bottom-of-funnel, no exceptions
+- Queries must read like something a real buyer would type into an AI assistant or post in a Slack community when they are days or weeks away from a decision
+- Use the buyer language not the seller language. No "robust," "seamless," "end-to-end," "best-in-class," "innovative," "strategic partner"
+- At least 6 queries must reference a competitor naturally (only if competitors were provided)
+- At least 4 queries must carry decision-pressure language ("need to decide," "about to sign," "final two options," "last thing I need to figure out")
+- At least 4 queries must be proof-seeking, asking for real outcomes, references, or case studies in a specific context
+- Queries must span at least 4 different industry verticals plausible for this ICP
+- No two queries should have the same combination of filters
+- Zero marketing or vendor language anywhere in the queries
+- For provider_evaluating and decision_ready queries: you MAY mention {company_name} by name when it makes the query more realistic and specific, as a real buyer close to signing would
+- For proof_seeking queries: do NOT mention {company_name} by name, keep them unbiased validation queries
 
 ## GOOD VS BAD EXAMPLES
 
-For a content marketing agency:
+For a B2B content marketing agency:
 
-Good: we are a 40-person DevOps SaaS company in the US, our founder used to write all the content but we just closed Series A and he does not have time anymore, how do we find a content agency that actually understands technical buyers and will not just churn out generic blog posts
+Good: "we're down to two content agencies for our Series B DevOps SaaS, one has more clients in our space but the other's writing quality is noticeably better, how do other B2B SaaS founders think about this tradeoff when they're about to sign"
 
-Bad: best content marketing software for B2B SaaS companies with editorial calendar and SEO features
+Good: "looking for a B2B SaaS content marketing agency that has actually moved pipeline not just traffic, does anyone have direct experience with {company_name} or similar shops, we're a 60-person security software company in the US and need to decide in the next two weeks"
 
-Why bad: a buyer looking for an agency is not looking for software. The query must reflect the actual buying motion.
+Bad: "what is the best content marketing agency for SaaS companies"
+Why bad: too early stage, no specificity, no decision pressure, no filters
 
 For a B2B SaaS tool:
 
-Good: our CS team is 4 people managing 300 accounts, we are losing track of renewals, tried Asana but it was not built for this, what are teams our size actually using
+Good: "we've been trialing both Tool A and Tool B for three weeks with our 8-person RevOps team, Tool A has better reporting but Tool B connects natively with our Salesforce setup, has anyone dealt with this exact tradeoff and what did you end up choosing"
 
-Bad: best project management software for customer success with renewal tracking
-
-## FINAL QUALITY CHECKLIST apply before returning output
-- Every query reflects the correct business type, no software filters in a services context
-- Every query has minimum 5 filters
-- No two queries share the same filter combination
-- Buying stages distributed across all five, no clustering
-- At least 3 queries contain emotional buyer language
-- At least 4 queries are high-intent late-stage
-- At least 5 queries reference a competitor naturally if competitors provided
-- Queries span at least 4 different industry verticals
-- Zero marketing or vendor language anywhere
-- Every query reads like Reddit, Slack, or real AI chat
+Bad: "best RevOps tools for SaaS companies"
+Why bad: awareness stage, no filters, not bottom-of-funnel
 
 ## OUTPUT FORMAT
-Return a JSON array of exactly 25 objects. Each object must follow this schema exactly:
+
+Return a JSON array of exactly 25 objects. Each object must follow this schema:
 {{
   "query_id": 1,
-  "query": "<natural buyer language>",
-  "buying_stage": "<pain_aware | solution_aware | provider_evaluating | proof_seeking | decision_ready>",
+  "query": "<the actual search query in natural buyer language>",
+  "buying_stage": "<provider_evaluating | proof_seeking | decision_ready>",
   "filters_applied": {{
     "geography": "<value or null>",
     "company_size": "<value or null>",
@@ -258,18 +286,37 @@ Return a JSON array of exactly 25 objects. Each object must follow this schema e
     "trigger": "<value or null>",
     "emotional_state": "<value or null>",
     "situational_context": "<value or null>",
+    "team_size": "<value or null>",
+    "budget_signal": "<value or null>",
+    "feature_need": "<value or null>",
+    "integration_need": "<value or null>",
     "engagement_model": "<value or null>",
     "outcome_focus": "<value or null>",
     "capability_gap": "<value or null>",
     "past_experience": "<value or null>",
     "proof_signal": "<value or null>",
-    "competitor_context": "<value or null>"
+    "competitor_context": "<value or null>",
+    "target_keyword_used": "<keyword from target keywords woven into this query, or null>"
   }},
   "filter_count": 5,
-  "rationale": "<1 sentence why a real buyer would search this>"
+  "rationale": "<1 sentence explaining why a buyer this close to a decision would search exactly this>"
 }}
 
 Only include filter keys relevant to this business type. Null out all filters that do not apply to a given query.
+
+## FINAL QUALITY CHECKLIST — verify before returning output
+- Business type was either accepted from input or explicitly inferred, not assumed
+- Every single query is bottom-of-funnel: provider_evaluating, proof_seeking, or decision_ready only
+- No query could be mistaken for an awareness or consideration stage search
+- Every query has a minimum filter_count of 5
+- No two queries share the same combination of filters
+- At least 6 queries reference a competitor naturally (if competitors were provided)
+- At least 4 queries contain decision-pressure language
+- At least 4 queries are proof-seeking with specific context
+- Target keywords appear naturally across multiple queries (if provided)
+- Queries span at least 4 different industry verticals plausible for this ICP
+- Zero marketing or vendor language in any query
+- Every query reads like something a real buyer would type when they are days or weeks away from committing
 
 Return ONLY the JSON array. No preamble. No explanation. No markdown fences."""
 
@@ -299,13 +346,16 @@ Return ONLY the JSON array. No preamble. No explanation. No markdown fences."""
         normalized.append({
             "query": q["query"],
             "category": q["buying_stage"],
-            "filters": q["filters_applied"],
+            "topic": "Auto",
+            "filters": q.get("filters_applied", {}),
             "filter_count": q.get("filter_count", 5),
             "rationale": q.get("rationale", ""),
-            "query_id": q.get("query_id", 0)
+            "query_id": q.get("query_id", 0),
+            "target_keyword_used": q.get("filters_applied", {}).get("target_keyword_used", None)
         })
 
     return normalized
+
 
 def generate_queries_for_topic(
     topic: str,
@@ -314,14 +364,17 @@ def generate_queries_for_topic(
     competitors: list = None,
     queries_per_topic: int = 5,
     geography: str = "United States",
+    business_type: str = "",
+    target_keywords: list = None,
     preferred_backend: str = "groq",
     allowed_backends: list = None
 ) -> list:
     """
-    Generates queries for a single topic using ICP as context.
+    Generates bottom-of-funnel queries for a single topic using ICP as context.
     Returns list of query objects tagged with the topic.
     """
     competitors_text = ", ".join(competitors) if competitors else "not specified"
+    keywords_text = ", ".join(target_keywords) if target_keywords else "not specified"
 
     icp_formatted = f"""
 Industries: {', '.join(icp_data.get('industries', []))}
@@ -333,42 +386,53 @@ Budget ranges: {', '.join(icp_data.get('budget_ranges', []))}
 Company stages: {', '.join(icp_data.get('company_stages', []))}
 """
 
-    prompt = f"""You are an expert B2B market researcher. Generate exactly {queries_per_topic} highly specific buyer queries for the topic below.
+    bt = business_type if business_type and business_type.lower() not in ["auto detect", "not specified", ""] else "infer from ICP"
+
+    prompt = f"""You are an expert B2B market researcher. Generate exactly {queries_per_topic} bottom-of-funnel buyer queries for the topic below.
 
 Company: {company_name}
 Topic: {topic}
+Business Type: {bt}
 Geography: {geography}
 Competitors: {competitors_text}
+Target Keywords: {keywords_text}
 
 ICP Context:
 {icp_formatted}
 
 CRITICAL RULES:
+- Every query must be BOTTOM-OF-FUNNEL only: provider_evaluating, proof_seeking, or decision_ready
 - Every query must be specifically about the topic: "{topic}"
-- Queries must sound like a real buyer typed them into Reddit, Slack, or ChatGPT
-- Do NOT mention {company_name} in any query
-- Use buyer language, not marketing language
-- Each query must feel different, covering different angles of the topic
-- Span different buying stages: pain_aware, solution_aware, provider_evaluating, proof_seeking, decision_ready
-- Include geography "{geography}" naturally in at least 2 queries
-- If competitors provided, mention them naturally in at least 1 query
+- Queries must sound like a real buyer typed them when days or weeks away from a decision
+- Do NOT generate awareness or consideration queries
+- At least 2 queries must carry decision-pressure language: "need to decide", "about to sign", "final shortlist"
+- At least 1 query must be proof-seeking: asking for real outcomes, references, or case studies
+- For provider_evaluating and decision_ready queries: you MAY mention {company_name} by name when realistic
+- For proof_seeking queries: do NOT mention {company_name} by name
+- Include geography "{geography}" naturally in at least 1 query
+- If competitors provided, mention at least 1 naturally
+- If target keywords provided, weave them naturally into queries where appropriate
+- Each query must cover a different angle of the topic
+- Zero marketing language
 
 Return a JSON array of exactly {queries_per_topic} objects:
 [
   {{
     "query_id": 1,
-    "query": "<natural buyer language query about {topic}>",
-    "buying_stage": "<pain_aware | solution_aware | provider_evaluating | proof_seeking | decision_ready>",
+    "query": "<natural buyer language bottom-of-funnel query about {topic}>",
+    "buying_stage": "<provider_evaluating | proof_seeking | decision_ready>",
     "filters_applied": {{
       "geography": "<value or null>",
       "company_size": "<value or null>",
       "industry_vertical": "<value or null>",
       "persona": "<value or null>",
       "pain_point": "<value or null>",
-      "emotional_state": "<value or null>"
+      "trigger": "<value or null>",
+      "emotional_state": "<value or null>",
+      "target_keyword_used": "<keyword used or null>"
     }},
     "filter_count": 5,
-    "rationale": "<why a real buyer would search this>"
+    "rationale": "<why a buyer this close to a decision would search this>"
   }}
 ]
 
@@ -395,12 +459,13 @@ Return ONLY the JSON array. No explanation. No markdown fences."""
     for q in queries[:queries_per_topic]:
         normalized.append({
             "query": q["query"],
-            "category": q.get("buying_stage", "solution_aware"),
+            "category": q.get("buying_stage", "provider_evaluating"),
             "topic": topic,
             "filters": q.get("filters_applied", {}),
             "filter_count": q.get("filter_count", 5),
             "rationale": q.get("rationale", ""),
-            "query_id": q.get("query_id", 0)
+            "query_id": q.get("query_id", 0),
+            "target_keyword_used": q.get("filters_applied", {}).get("target_keyword_used", None)
         })
 
     return normalized
