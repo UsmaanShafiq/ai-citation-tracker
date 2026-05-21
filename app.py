@@ -649,6 +649,7 @@ if run_btn:
             "Stage": r["category"].replace("_", " ").title(),
             "Tool": r["tool"],
             "Query": r["query"],
+            "Answer": r["response"][:300] + "..." if len(r.get("response", "")) > 300 else r.get("response", ""),
             "Keyword Used": r.get("target_keyword_used") or "-",
             "Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
             "Position": r["brands_detected"]["target_position"] or "-",
@@ -657,9 +658,33 @@ if run_btn:
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Query": st.column_config.TextColumn(width="large"),
+            "Answer": st.column_config.TextColumn(width="large"),
+        }
+    )
 
-    csv = df.to_csv(index=False)
+    # CSV gets full untruncated answer
+    csv_rows = []
+    for r in all_results:
+        csv_rows.append({
+            "Topic": r.get("topic", "Auto"),
+            "Stage": r["category"].replace("_", " ").title(),
+            "Tool": r["tool"],
+            "Query": r["query"],
+            "Full Answer": r.get("response", ""),
+            "Keyword Used": r.get("target_keyword_used") or "-",
+            "Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
+            "Position": r["brands_detected"]["target_position"] or "-",
+            "Context": r["brands_detected"]["target_context"],
+            "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
+        })
+
+    csv = pd.DataFrame(csv_rows).to_csv(index=False)
     st.download_button(
         label="Download CSV",
         data=csv,
