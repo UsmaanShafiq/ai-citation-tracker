@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(__file__))
 
 from core.icp_parser import parse_and_validate
 from core.query_generator import generate_all_queries, generate_queries_for_topic
-from core.scorer import calculate_citation_share, calculate_citation_share_by_topic
+from core.scorer import calculate_citation_share, calculate_citation_share_by_topic, calculate_citation_share_by_group
 from core.ai_runner import ALL_TOOLS, run_selected_tools, check_key_exists, get_usage_stats, reset_usage_stats
 from core.brand_detector import detect_brands
 
@@ -538,6 +538,7 @@ if run_btn:
 
             all_results.append({
                 "query": q["query"],
+                "query_group": q.get("query_group", "C"),
                 "category": q["category"],
                 "topic": q.get("topic", "Auto"),
                 "filters": q["filters"],
@@ -592,6 +593,22 @@ if run_btn:
     else:
         st.info("No category data available.")
 
+    # Query Group results
+    st.subheader("Citation Share by Query Group")
+    st.caption("Group A: queries naming your brand + a competitor | Group B: queries naming your brand only | Group C: shortlisting queries with no brand names")
+    group_scores = calculate_citation_share_by_group(all_results, brand_name)
+    if group_scores:
+        group_rows = []
+        for group_label, data in group_scores.items():
+            group_rows.append({
+                "Group": group_label,
+                "Citation Share": f"{data['share_pct']}%",
+                "Mentions": f"{data['mentions']}/{data['total_queries']}"
+            })
+        st.dataframe(pd.DataFrame(group_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No group data available.")
+
     # Topic-based results
     if st.session_state.get("topics"):
         st.subheader("Citation Share by Topic")
@@ -645,6 +662,7 @@ if run_btn:
     rows = []
     for r in all_results:
         rows.append({
+            "Group": r.get("query_group", "C"),
             "Topic": r.get("topic", "Auto"),
             "Stage": r["category"].replace("_", " ").title(),
             "Tool": r["tool"],
@@ -672,6 +690,7 @@ if run_btn:
     csv_rows = []
     for r in all_results:
         csv_rows.append({
+            "Group": r.get("query_group", "C"),
             "Topic": r.get("topic", "Auto"),
             "Stage": r["category"].replace("_", " ").title(),
             "Tool": r["tool"],

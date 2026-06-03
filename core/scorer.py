@@ -237,6 +237,44 @@ if __name__ == "__main__":
     report = format_report(score)
     print(report)
 
+
+def calculate_citation_share_by_group(results: list, target_brand: str) -> dict:
+    """
+    Groups results by query_group (A/B/C) and calculates citation share per group.
+    Group A: Company + Competitor queries
+    Group B: Company Only queries
+    Group C: Shortlisting queries (no company names)
+    """
+    from collections import defaultdict
+
+    group_labels = {
+        "A": "Group A: Company + Competitor",
+        "B": "Group B: Company Only",
+        "C": "Group C: Shortlisting"
+    }
+
+    group_data = defaultdict(list)
+    for r in results:
+        g = r.get("query_group", "C")
+        group_data[g].append(r)
+
+    group_scores = {}
+    for group_key in ["A", "B", "C"]:
+        group_results = group_data.get(group_key, [])
+        if not group_results:
+            continue
+        total = len(group_results)
+        mentions = sum(1 for r in group_results if r["brands_detected"]["target_mentioned"])
+        share = round((mentions / total) * 100) if total > 0 else 0
+        group_scores[group_labels.get(group_key, group_key)] = {
+            "total_queries": total,
+            "mentions": mentions,
+            "share_pct": share
+        }
+
+    return group_scores
+
+
 def calculate_citation_share_by_topic(results: list, target_brand: str) -> dict:
     """
     Groups results by topic and calculates citation share per topic.
