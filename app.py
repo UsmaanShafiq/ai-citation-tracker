@@ -440,6 +440,10 @@ if run_btn:
                         preferred_backend=query_backends[0],
                         allowed_backends=query_backends
                     )
+                    # Verify topic is set on all queries
+                    for q in topic_queries:
+                        if not q.get("topic") or q["topic"] == "Auto":
+                            q["topic"] = topic
                     queries.extend(topic_queries)
                     st.write(f"Generated {len(topic_queries)} queries for topic: {topic}")
             else:
@@ -536,13 +540,32 @@ if run_btn:
                 user_competitors=competitors_list
             )
 
+            # Match target keyword against actual keywords user entered
+            kw_used = None
+            if target_keywords_list:
+                query_lower = q["query"].lower()
+                for kw in target_keywords_list:
+                    if kw.lower() in query_lower:
+                        kw_used = kw
+                        break
+                # Fall back to what query generator detected
+                if not kw_used:
+                    raw_kw = q.get("target_keyword_used")
+                    if raw_kw and any(kw.lower() in (raw_kw or "").lower() for kw in target_keywords_list):
+                        kw_used = raw_kw
+
+            # Ensure topic is preserved
+            topic_val = q.get("topic", "Auto")
+            if not topic_val or topic_val == "":
+                topic_val = "Auto"
+
             all_results.append({
                 "query": q["query"],
                 "query_group": q.get("query_group", "C"),
                 "category": q["category"],
-                "topic": q.get("topic", "Auto"),
+                "topic": topic_val,
                 "filters": q["filters"],
-                "target_keyword_used": q.get("target_keyword_used"),
+                "target_keyword_used": kw_used,
                 "tool": tool_name,
                 "response": response_text,
                 "brands_detected": brand_data

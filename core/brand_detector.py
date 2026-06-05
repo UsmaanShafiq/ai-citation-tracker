@@ -42,6 +42,7 @@ KNOWN_SERVICE_BRANDS = [
 # =============================================================================
 
 SOFTWARE_TOOLS_TO_EXCLUDE = [
+    # Software tools
     "HubSpot", "Ahrefs", "SEMrush", "Google", "Google Analytics",
     "Salesforce", "Marketo", "WordPress", "Trello", "Asana",
     "Notion", "Hootsuite", "Buffer", "Sprout Social", "Moz",
@@ -52,6 +53,15 @@ SOFTWARE_TOOLS_TO_EXCLUDE = [
     "QuickBooks", "Stripe", "Intercom", "Zendesk", "Freshdesk",
     "ServiceNow", "Zoho", "Pipedrive", "LinkedIn", "Twitter",
     "Facebook", "Instagram", "YouTube", "TikTok", "Reddit",
+    # Large consulting / enterprise firms - not content agencies
+    "Accenture", "Accenture Interactive", "Deloitte", "Deloitte Digital",
+    "KPMG", "KPMG Digital", "McKinsey", "PwC", "PwC Digital",
+    "IBM", "IBM iX", "Wipro", "Wipro Digital", "Infosys",
+    "Ernst & Young", "EY", "BCG", "Bain", "Capgemini",
+    "Publicis", "Publicis Sapient", "FTI Consulting",
+    "Ogilvy", "WPP", "Dentsu", "Havas", "Grey",
+    # PR and traditional marketing firms not relevant to B2B SaaS content
+    "Weber Shandwick", "Edelman", "Ketchum", "Burson",
 ]
 
 
@@ -95,14 +105,14 @@ def pass_two_llm_detection(
     if business_type == "service":
         brand_instruction = """IMPORTANT: This is for a SERVICE BUSINESS, specifically a content marketing agency.
 
-A competitor is ONLY a brand recommended as a service provider, agency, consultancy, or content studio.
+A competitor is ONLY a brand recommended as a B2B content marketing agency, content studio, or niche content consultancy.
 
-Do NOT include any of these as competitors. They are software tools not service providers:
-HubSpot, Ahrefs, SEMrush, Google, Google Analytics, Salesforce, Marketo, WordPress,
-Trello, Asana, Notion, Hootsuite, Buffer, Moz, Clearscope, MarketMuse, CoSchedule,
-Monday, ClickUp, Slack, Microsoft, Zoom, LinkedIn, Mailchimp, ActiveCampaign.
+Do NOT include any of these - they are either software tools or large enterprise consulting firms, not B2B content agencies:
+Software tools: HubSpot, Ahrefs, SEMrush, Google, Salesforce, Marketo, WordPress, Trello, Asana, Notion, Hootsuite, Moz, Clearscope, MarketMuse, Monday, ClickUp, Slack, Microsoft, Mailchimp.
+Large consulting firms: Accenture, Deloitte, KPMG, McKinsey, PwC, IBM, Wipro, Ernst & Young, EY, BCG, Bain, Capgemini, Publicis, Ogilvy, WPP, Dentsu, FTI Consulting, Publicis Sapient.
+PR firms: Weber Shandwick, Edelman, Ketchum.
 
-Only include brands that are content agencies, content studios, or B2B content consultancies."""
+Only include brands that are specifically B2B content marketing agencies or content studios - companies whose primary offering is content creation and strategy for B2B companies."""
     else:
         brand_instruction = """Extract every software product, platform, or SaaS tool mentioned.
 Include all software brands and tools that appear as recommendations."""

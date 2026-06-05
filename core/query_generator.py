@@ -438,7 +438,54 @@ def _parse_and_normalize(raw: str, count: int, topic: str = "Auto") -> list:
             "target_keyword_used": q.get("filters_applied", {}).get("target_keyword_used", None)
         })
 
+    # Post-process: enforce exact 5/10/10 distribution for full 25-query runs
+    if count == 25:
+        normalized = _enforce_group_distribution(normalized)
+
     return normalized
+
+
+def _enforce_group_distribution(queries: list) -> list:
+    """
+    Ensures exactly 5 Group A, 10 Group B, 10 Group C queries.
+    If model generated wrong counts, reassigns excess queries to deficient groups.
+    Priority: preserve Group A count first, then B, then C gets remainder.
+    """
+    target = {"A": 5, "B": 10, "C": 10}
+
+    groups = {"A": [], "B": [], "C": []}
+    for q in queries:
+        g = q.get("query_group", "C")
+        if g not in groups:
+            g = "C"
+        groups[g].append(q)
+
+    result = []
+
+    # Take exactly target count from each group
+    for g in ["A", "B", "C"]:
+        result.extend(groups[g][:target[g]])
+
+    # If any group is short, fill from overflow of other groups
+    for g in ["A", "B", "C"]:
+        needed = target[g] - len([q for q in result if q["query_group"] == g])
+        if needed > 0:
+            # Find queries from over-represented groups
+            for src_g in ["C", "B", "A"]:
+                if src_g == g:
+                    continue
+                overflow = [q for q in groups[src_g] if q not in result]
+                for q in overflow[:needed]:
+                    q_copy = dict(q)
+                    q_copy["query_group"] = g
+                    result.append(q_copy)
+                    needed -= 1
+                    if needed == 0:
+                        break
+                if needed == 0:
+                    break
+
+    return result[:25]
 
 
 def generate_all_queries(
