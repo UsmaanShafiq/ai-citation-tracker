@@ -132,7 +132,14 @@ Complete this reasoning before generating any queries."""
     if keywords_text and keywords_text != "not specified":
         keyword_section = f"""
 **Target Keywords (optional):** {keywords_text}
-(Weave these naturally into queries where they fit buyer language. Do not force into every query. Target keywords are especially important in Group C shortlisting queries where buyers use category language. Aim for meaningful coverage across all 25 queries.)"""
+
+IMPORTANT KEYWORD DEFINITIONS (do not misinterpret these):
+- GEO Agency or B2B SaaS GEO Agency = Generative Engine Optimization agency, meaning an agency that helps brands appear in AI-generated answers from ChatGPT, Perplexity, Gemini, and similar tools. This is NOT geographic expansion or global office location.
+- AEO Agency = Answer Engine Optimization agency, same concept as GEO.
+- SEO Agency = Search Engine Optimization agency for Google and traditional search engines.
+- B2B SaaS Content Marketing Agency = an agency that creates strategic content specifically for B2B SaaS companies to generate leads and pipeline.
+
+Weave these keywords naturally into queries where they fit buyer language. Do not force into every query. Target keywords are especially important in Group C shortlisting queries where buyers use category language. Aim for meaningful coverage across all 25 queries."""
 
     return f"""You are an expert B2B market researcher and buyer behavior analyst. Your job is to generate hyper-specific, bottom-of-the-funnel AI search queries that real buyers type when they are close to creating a shortlist or making a purchase decision in {company_name}'s category.
 
@@ -447,9 +454,8 @@ def _parse_and_normalize(raw: str, count: int, topic: str = "Auto") -> list:
 
 def _enforce_group_distribution(queries: list) -> list:
     """
-    Ensures exactly 5 Group A, 10 Group B, 10 Group C queries.
-    If model generated wrong counts, reassigns excess queries to deficient groups.
-    Priority: preserve Group A count first, then B, then C gets remainder.
+    Hard enforces exactly 5 Group A, 10 Group B, 10 Group C.
+    Trims excess from over-represented groups and fills deficient groups.
     """
     target = {"A": 5, "B": 10, "C": 10}
 
@@ -460,30 +466,25 @@ def _enforce_group_distribution(queries: list) -> list:
             g = "C"
         groups[g].append(q)
 
-    result = []
-
-    # Take exactly target count from each group
+    overflow = []
+    trimmed = {"A": [], "B": [], "C": []}
     for g in ["A", "B", "C"]:
-        result.extend(groups[g][:target[g]])
+        trimmed[g] = groups[g][:target[g]]
+        overflow.extend(groups[g][target[g]:])
 
-    # If any group is short, fill from overflow of other groups
     for g in ["A", "B", "C"]:
-        needed = target[g] - len([q for q in result if q["query_group"] == g])
-        if needed > 0:
-            # Find queries from over-represented groups
-            for src_g in ["C", "B", "A"]:
-                if src_g == g:
-                    continue
-                overflow = [q for q in groups[src_g] if q not in result]
-                for q in overflow[:needed]:
-                    q_copy = dict(q)
-                    q_copy["query_group"] = g
-                    result.append(q_copy)
-                    needed -= 1
-                    if needed == 0:
-                        break
-                if needed == 0:
-                    break
+        needed = target[g] - len(trimmed[g])
+        if needed > 0 and overflow:
+            for q in overflow[:needed]:
+                q_copy = dict(q)
+                q_copy["query_group"] = g
+                trimmed[g].append(q_copy)
+            overflow = overflow[needed:]
+
+    result = trimmed["A"] + trimmed["B"] + trimmed["C"]
+
+    while len(result) < 25 and result:
+        result.append(dict(result[-1]))
 
     return result[:25]
 

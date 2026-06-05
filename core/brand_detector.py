@@ -62,6 +62,21 @@ SOFTWARE_TOOLS_TO_EXCLUDE = [
     "Ogilvy", "WPP", "Dentsu", "Havas", "Grey",
     # PR and traditional marketing firms not relevant to B2B SaaS content
     "Weber Shandwick", "Edelman", "Ketchum", "Burson",
+    # Additional firms seen in results
+    "iCrossing", "Reprise", "Merkle", "Performics", "360i",
+    "Digitas", "R/GA", "Razorfish", "SapientRazorfish",
+    "W2O Group", "Havas Health", "Havas Health Plus", "Ogilvy Health",
+    "Finn Partners", "Prosek Partners", "Peppercomm", "Greentarget",
+    "Makovsky", "Inkhouse", "Airfoil Communications",
+    "March Communications", "WE Communications",
+    "Mediacom", "Digitas Health", "CMI Media Group", "FCB Health",
+    "EvokeKyne", "Syneos Health", "AbelsonTaylor", "Medullan",
+    "Cognizant", "Cognizant Digital", "Capgemini Invent",
+    "EY Digital", "EY Consulting", "KPMG Advisory",
+    "PwC Digital Services", "Infosys Consulting", "Infosys Digital",
+    "Colliers", "JLL", "CBRE", "Newmark Knight Frank",
+    "Cushman", "iProspect", "Wavemaker", "Havas",
+    "Investis Digital", "Provencher UX",
 ]
 
 
