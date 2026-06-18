@@ -30,16 +30,40 @@ def format_error_message(raw_error: str) -> str:
     return msg
 
 
+def _get_key(env_key: str) -> str:
+    """
+    Read API key - checks os.environ first, then re-reads .env file directly.
+    This handles the case where a key was saved in the same Streamlit session
+    (os.getenv caches the env at startup and won't reflect new saves).
+    """
+    # First try os.environ (works if key was set before app started)
+    val = os.environ.get(env_key, "").strip()
+    if val and "paste_your" not in val.lower():
+        return val
+    # Fall back to reading .env file directly (handles same-session saves)
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(env_key + "="):
+                    v = line.split("=", 1)[1].strip()
+                    if v and "paste_your" not in v.lower():
+                        os.environ[env_key] = v  # update for future calls
+                        return v
+    return ""
+
+
 def _call_ai_for_json(prompt: str) -> str:
     """Call best available AI model for JSON generation (topics/prompts)."""
     # Try Groq first (free)
-    groq_key = os.getenv("GROQ_API_KEY", "")
+    groq_key = _get_key("GROQ_API_KEY")
     if groq_key:
         try:
             from groq import Groq
             client = Groq(api_key=groq_key)
             resp = client.chat.completions.create(
-                model="llama3-8b-8192",
+                model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=2000,
                 temperature=0.7,
@@ -49,7 +73,7 @@ def _call_ai_for_json(prompt: str) -> str:
             pass
 
     # Try Gemini
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    gemini_key = _get_key("GEMINI_API_KEY")
     if gemini_key:
         try:
             from google import genai
@@ -60,7 +84,7 @@ def _call_ai_for_json(prompt: str) -> str:
             pass
 
     # Try OpenAI
-    openai_key = os.getenv("OPENAI_API_KEY", "")
+    openai_key = _get_key("OPENAI_API_KEY")
     if openai_key:
         try:
             from openai import OpenAI
@@ -145,6 +169,53 @@ def extract_linked_sites(text: str) -> list:
         sites.append({"rank": i, "domain": domain, "url": url})
     return sites
 
+
+
+def tag_input(label: str, session_key: str, placeholder: str = "", help_text: str = "") -> list:
+    """Renders a tag/pill input. User types values and clicks Add to create pills."""
+    if session_key not in st.session_state:
+        st.session_state[session_key] = []
+
+    tags = st.session_state[session_key]
+
+    st.markdown(f"**{label}**")
+    if help_text:
+        st.caption(help_text)
+
+    if tags:
+        pills_html = "".join([
+            f'<span style="display:inline-block;background:#1e3a5f;color:#7dd3fc;'
+            f'border:1px solid #2563eb;border-radius:999px;padding:3px 12px;'
+            f'margin:2px 4px 2px 0;font-size:13px;">{t}</span>'
+            for t in tags
+        ])
+        st.markdown(f'<div style="margin-bottom:6px">{pills_html}</div>', unsafe_allow_html=True)
+
+    col_in, col_add, col_clear = st.columns([5, 1, 1])
+    with col_in:
+        new_val = st.text_input(
+            label, key=f"{session_key}_input",
+            placeholder=placeholder, label_visibility="collapsed"
+        )
+    with col_add:
+        st.write("")
+        if st.button("+ Add", key=f"{session_key}_add_btn", use_container_width=True):
+            items = [v.strip() for v in new_val.split(",") if v.strip()]
+            added = False
+            for item in items:
+                if item and item not in st.session_state[session_key]:
+                    st.session_state[session_key].append(item)
+                    added = True
+            if added:
+                st.rerun()
+    with col_clear:
+        if tags:
+            st.write("")
+            if st.button("Clear", key=f"{session_key}_clear_btn", use_container_width=True):
+                st.session_state[session_key] = []
+                st.rerun()
+
+    return st.session_state[session_key]
 
 # =============================================================================
 # PAGE CONFIG
@@ -288,8 +359,10 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Start Over", use_container_width=True):
         for key in ["step", "brand_data", "topics", "selected_topics",
-                    "prompts_by_topic", "selected_prompts", "all_results", "run_complete"]:
-            del st.session_state[key]
+                    "prompts_by_topic", "selected_prompts", "all_results", "run_complete",
+                    "step1_products", "step1_customers", "step1_key_features"]:
+            if key in st.session_state:
+                del st.session_state[key]
         st.rerun()
 
 # =============================================================================
@@ -323,20 +396,23 @@ if st.session_state.step == 1:
     with col2:
         brand_domain = st.text_input("Brand Domain/URL *", placeholder="e.g. concurate.com")
 
-    products_input = st.text_input(
+    products_list = tag_input(
         "Your Products and Services",
-        placeholder="e.g. B2B content marketing, SEO content, GEO content (comma separated)",
-        help="List all possible ways customers may describe your products/services"
+        session_key="step1_products",
+        placeholder="Type a product/service and click Add",
+        help_text="List all possible ways customers may describe your products/services"
     )
-    customers_input = st.text_input(
+    customers_list = tag_input(
         "Your Target Customers",
-        placeholder="e.g. B2B SaaS companies, Series A startups, Marketing managers (comma separated)",
-        help="Briefly list your different ideal customer personas"
+        session_key="step1_customers",
+        placeholder="Type a customer persona and click Add",
+        help_text="Briefly list your different ideal customer personas"
     )
-    key_features_input = st.text_input(
+    key_features_list = tag_input(
         "Key Features / Differentiators",
-        placeholder="e.g. subject matter expert writers, no fluff content, AI-optimized (comma separated)",
-        help="List important features, benefits and differentiators"
+        session_key="step1_key_features",
+        placeholder="Type a feature or benefit and click Add",
+        help_text="List important features, benefits and differentiators"
     )
 
     business_type = st.selectbox(
@@ -365,9 +441,9 @@ if st.session_state.step == 1:
             st.session_state.brand_data = {
                 "name": brand_name.strip(),
                 "domain": brand_domain.strip(),
-                "products": [p.strip() for p in products_input.split(",") if p.strip()],
-                "customers": [c.strip() for c in customers_input.split(",") if c.strip()],
-                "key_features": [k.strip() for k in key_features_input.split(",") if k.strip()],
+                "products": products_list,
+                "customers": customers_list,
+                "key_features": key_features_list,
                 "business_type": business_type,
                 "country": country,
                 "competitors": [c.strip() for c in competitors_input.split(",") if c.strip()],
