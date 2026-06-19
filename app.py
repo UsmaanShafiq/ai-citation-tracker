@@ -122,42 +122,214 @@ def _parse_json_list(text: str) -> list:
     return re.findall(r'"([^"]{5,200})"', text)
 
 
+
+def fetch_brand_website(domain: str) -> str:
+    """
+    Visits the brand's website and extracts meaningful text content.
+    Returns extracted text or empty string if fetch fails.
+    Cleans up navigation, scripts, and boilerplate to keep only real content.
+    """
+    import requests
+    from urllib.parse import urlparse
+
+    # Normalize domain to full URL
+    domain = domain.strip().rstrip("/")
+    if not domain.startswith("http"):
+        url = "https://" + domain
+    else:
+        url = domain
+
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        html = response.text
+
+        # Remove scripts, styles, nav, footer boilerplate
+        import re as _re
+        html = _re.sub(r"<script[^>]*>[\s\S]*?</script>", " ", html, flags=_re.IGNORECASE)
+        html = _re.sub(r"<style[^>]*>[\s\S]*?</style>", " ", html, flags=_re.IGNORECASE)
+        html = _re.sub(r"<nav[^>]*>[\s\S]*?</nav>", " ", html, flags=_re.IGNORECASE)
+        html = _re.sub(r"<footer[^>]*>[\s\S]*?</footer>", " ", html, flags=_re.IGNORECASE)
+        html = _re.sub(r"<header[^>]*>[\s\S]*?</header>", " ", html, flags=_re.IGNORECASE)
+
+        # Strip all remaining HTML tags
+        text = _re.sub(r"<[^>]+>", " ", html)
+
+        # Clean up whitespace
+        text = _re.sub(r"[ \t\n\r]+", " ", text).strip()
+
+        # Keep only meaningful portion (first 3000 chars covers homepage content)
+        text = text[:3000]
+
+        # Basic quality check - if too short it probably failed
+        if len(text.strip()) < 100:
+            return ""
+
+        return text.strip()
+
+    except Exception:
+        return ""
+
+
 def ai_generate_topics(brand_data: dict) -> list:
-    prompt = f"""You are an AI search visibility expert. Based on this brand profile, generate 5 realistic search topics that potential customers would use when searching for solutions like this brand.
+    business_type = brand_data.get("business_type", "")
+    products = ", ".join(brand_data.get("products", []))
+    customers = ", ".join(brand_data.get("customers", []))
+    key_features = ", ".join(brand_data.get("key_features", []))
+    domain = brand_data.get("domain", "")
 
-Brand: {brand_data['name']}
-Domain: {brand_data['domain']}
-Products/Services: {', '.join(brand_data.get('products', []))}
-Target Customers: {', '.join(brand_data.get('customers', []))}
-Key Features: {', '.join(brand_data.get('key_features', []))}
-Business Type: {brand_data.get('business_type', '')}
-Country: {brand_data.get('country', 'United States')}
+    # Visit the brand website for accurate context
+    website_text = ""
+    if domain:
+        website_text = fetch_brand_website(domain)
 
-Generate 5 short keyword-style search topics (not full questions). Each should represent a real search intent.
-Respond ONLY with a JSON array of 5 strings. No explanation, no markdown.
-Example: ["best accounting software for small businesses", "invoice tracking software", "online bookkeeping software", "bookkeeping for accountants", "affordable accounting tools"]"""
+    # Build context block - website content takes priority, form data as supplement
+    if website_text:
+        context_block = (
+            "WEBSITE CONTENT (scraped directly from their homepage - use this as primary source of truth):\n"
+            + website_text[:2000]
+            + "\n\n"
+            "FORM DATA (entered by user - use to supplement website content):\n"
+            "What they do: " + products + "\n"
+            "Who they serve: " + customers + "\n"
+            "Key differentiators: " + key_features + "\n"
+        )
+    else:
+        # Fallback: no website content, use form data only
+        context_block = (
+            "BRAND PROFILE (entered by user):\n"
+            "What they do: " + products + "\n"
+            "Who they serve: " + customers + "\n"
+            "Key differentiators: " + key_features + "\n"
+        )
+
+    prompt = (
+        "You are an AI search visibility expert helping track how often brands appear in AI-generated answers.\n"
+        "Your job is to generate realistic search topics that a potential BUYER would type into an AI tool "
+        "like ChatGPT, Perplexity, or Gemini when looking for a solution like this brand.\n\n"
+        "IMPORTANT RULES:\n"
+        "- Read ALL the brand information below carefully before generating anything\n"
+        "- Infer the correct meaning of ALL industry terms and abbreviations from the brand context\n"
+        "- Do NOT assume any fixed meaning for abbreviations - let the brand content guide you\n"
+        "- Topics must reflect what a real buyer searches for, NOT what the brand wants to be known for\n"
+        "- Do NOT include the brand name in any topic\n"
+        "- Do NOT generate topics about software tools if this is a service/agency business\n"
+        "- Business type: " + business_type + "\n"
+        "- Think like a buyer who does not know this brand yet but has a problem this brand solves\n\n"
+        "Brand: " + brand_data["name"] + "\n"
+        "Domain: " + domain + "\n"
+        "Country: " + brand_data.get("country", "United States") + "\n\n"
+        + context_block +
+        "\nBased on ALL the information above, generate exactly 5 short keyword-style search topics (3-8 words each).\n"
+        "Each topic must represent a genuine search intent a potential customer would have.\n"
+        "NEVER include the brand name in any topic.\n\n"
+        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
+    )
 
     raw = _call_ai_for_json(prompt)
     topics = _parse_json_list(raw)
-    return [t.strip() for t in topics if t.strip()][:5]
+    # Filter out any topic that accidentally contains the brand name
+    brand_lower = brand_data["name"].lower()
+    topics = [t.strip() for t in topics if t.strip() and brand_lower not in t.lower()]
+    return topics[:5]
 
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
-    prompt = f"""You are an AI search visibility expert. For the topic "{topic}", generate 5 realistic conversational prompts that potential customers would type into AI tools like ChatGPT, Perplexity, or Gemini.
+    brand_name = brand_data["name"]
+    products = ", ".join(brand_data.get("products", []))
+    customers = ", ".join(brand_data.get("customers", []))
+    business_type = brand_data.get("business_type", "")
+    domain = brand_data.get("domain", "")
 
-Brand context:
-- Brand: {brand_data['name']}
-- Products: {', '.join(brand_data.get('products', []))}
-- Customers: {', '.join(brand_data.get('customers', []))}
-- Business Type: {brand_data.get('business_type', '')}
+    # Reuse cached website text if already fetched, else fetch again
+    website_text = brand_data.get("_website_text", "")
+    if not website_text and domain:
+        website_text = fetch_brand_website(domain)
 
-Generate 5 prompts that vary in style: some short keywords, some full questions, some comparison queries, some persona-based.
-Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."""
+    # Build context block
+    if website_text:
+        context_block = (
+            "Website content (primary source of truth for what this brand does):\n"
+            + website_text[:1500]
+            + "\n\nForm data: " + products + " | Customers: " + customers
+        )
+    else:
+        context_block = (
+            "What they offer: " + products + "\n"
+            "Who buys from them: " + customers
+        )
+
+    prompt = (
+        "You are an AI search visibility expert helping track how often brands appear in AI-generated answers.\n"
+        "For the topic below, generate 5 realistic prompts that a real potential buyer would type into "
+        "ChatGPT, Perplexity, or Gemini when searching for a solution.\n\n"
+        "Topic: " + topic + "\n\n"
+        "Brand context (use this to understand the industry and buyer correctly):\n"
+        + context_block + "\n"
+        "Business type: " + business_type + "\n\n"
+        "STRICT RULES - violating these makes the data useless:\n"
+        "- NEVER mention the brand name \"" + brand_name + "\" in any prompt\n"
+        "- NEVER mention any specific brand or company name in any prompt\n"
+        "- Prompts must sound like a real buyer who does NOT know which brand they will choose yet\n"
+        "- Vary the style: 1 short keyword, 2 full questions, 1 comparison, 1 persona-based\n"
+        "- Prompts must be specific enough to realistically surface agency/service recommendations\n"
+        "- Do NOT generate prompts about software tools or platforms if this is a service business\n\n"
+        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
+    )
 
     raw = _call_ai_for_json(prompt)
     prompts = _parse_json_list(raw)
-    result = [topic] + [p.strip() for p in prompts if p.strip() and p.strip().lower() != topic.lower()]
+
+    # Strict filter: remove any prompt that contains the brand name
+    brand_lower = brand_name.lower()
+    clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
+
+    # Always include the bare topic as first prompt (most natural search)
+    result = [topic] + [p for p in clean if p.lower() != topic.lower()]
     return result[:5]
+
+
+# Common English words falsely detected as brand names - filter these out
+BRAND_FALSE_POSITIVES = {
+    "relevance", "influence", "impact", "reach", "clarity", "signal",
+    "momentum", "velocity", "foundation", "element", "essence", "origin",
+    "focus", "vision", "mission", "purpose", "strategy", "content",
+    "agency", "studio", "digital", "creative", "media", "marketing",
+    "growth", "scale", "pipeline", "revenue", "performance", "results",
+    "insights", "analytics", "data", "intelligence", "solutions", "services",
+    "platform", "engine", "framework", "system", "network", "hub",
+    "monday", "notion", "canvas", "spectrum", "horizon", "zenith",
+    "apex", "summit", "peak", "core", "pulse", "spark", "flow",
+    "bridge", "link", "connect", "sync", "align", "engage",
+    "here", "there", "this", "that", "these", "those",
+    "first", "second", "third", "next", "last", "new", "old",
+    "best", "top", "great", "good", "better", "well", "more",
+    "also", "just", "only", "even", "still", "already", "yet",
+    "however", "therefore", "because", "although", "unless", "whether",
+}
+
+def is_false_positive_brand(name: str) -> bool:
+    """Returns True if this name is likely a false positive, not a real brand."""
+    name_lower = name.lower().strip()
+    # Single common words
+    if name_lower in BRAND_FALSE_POSITIVES:
+        return True
+    # Very short (1-2 chars) or very long (40+ chars)
+    if len(name_lower) <= 2 or len(name_lower) > 40:
+        return True
+    # All lowercase single word that is a common adjective/verb
+    if name_lower == name and " " not in name and len(name) < 8:
+        return True
+    return False
 
 
 def extract_linked_sites(text: str) -> list:
@@ -390,11 +562,22 @@ if st.session_state.step == 1:
     st.subheader("Step 1: Brand Details")
     st.caption("Enter your brand information. This is used to generate relevant topics and prompts.")
 
+    # Pre-populate from saved brand_data if user navigated back
+    _saved = st.session_state.get("brand_data") or {}
+
     col1, col2 = st.columns(2)
     with col1:
-        brand_name = st.text_input("Brand Name *", placeholder="e.g. Concurate")
+        brand_name = st.text_input("Brand Name *", value=_saved.get("name", ""), placeholder="e.g. Concurate")
     with col2:
-        brand_domain = st.text_input("Brand Domain/URL *", placeholder="e.g. concurate.com")
+        brand_domain = st.text_input("Brand Domain/URL *", value=_saved.get("domain", ""), placeholder="e.g. concurate.com")
+
+    # Restore pills from saved brand_data when user navigates back
+    if "step1_products" not in st.session_state and _saved.get("products"):
+        st.session_state["step1_products"] = list(_saved["products"])
+    if "step1_customers" not in st.session_state and _saved.get("customers"):
+        st.session_state["step1_customers"] = list(_saved["customers"])
+    if "step1_key_features" not in st.session_state and _saved.get("key_features"):
+        st.session_state["step1_key_features"] = list(_saved["key_features"])
 
     products_list = tag_input(
         "Your Products and Services",
@@ -415,21 +598,28 @@ if st.session_state.step == 1:
         help_text="List important features, benefits and differentiators"
     )
 
+    _btype_options = ["SaaS / Software", "Agency / Service Business", "Ecommerce / DTC Brand",
+                     "Marketplace / Aggregator", "Other / Not Sure"]
+    _btype_default = _saved.get("business_type", "SaaS / Software")
+    _btype_idx = _btype_options.index(_btype_default) if _btype_default in _btype_options else 0
     business_type = st.selectbox(
         "Business Type",
-        options=["SaaS / Software", "Agency / Service Business", "Ecommerce / DTC Brand",
-                 "Marketplace / Aggregator", "Other / Not Sure"],
+        options=_btype_options,
+        index=_btype_idx,
         help="Controls how competitors are detected"
     )
 
     col3, col4 = st.columns(2)
     with col3:
-        country = st.selectbox("Country", options=[
-            "United States", "United Kingdom", "Canada", "Australia",
-            "Germany", "India", "Pakistan", "Global"
-        ])
+        _country_options = ["United States", "United Kingdom", "Canada", "Australia",
+                             "Germany", "India", "Pakistan", "Global"]
+        _country_default = _saved.get("country", "United States")
+        _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
+        country = st.selectbox("Country", options=_country_options, index=_country_idx)
     with col4:
+        _saved_comps = ", ".join(_saved.get("competitors", []))
         competitors_input = st.text_input("Competitors (optional)",
+                                          value=_saved_comps,
                                           placeholder="Animalz, Siege Media, Grow and Convert")
 
     st.divider()
@@ -462,9 +652,19 @@ elif st.session_state.step == 2:
 
     # Auto-generate if not done yet
     if not st.session_state.topics:
+        with st.spinner("Visiting brand website for context..."):
+            # Fetch website once and cache in brand_data to reuse in prompt generation
+            if "_website_text" not in st.session_state.brand_data:
+                website_text = fetch_brand_website(bd.get("domain", ""))
+                st.session_state.brand_data["_website_text"] = website_text
+                if website_text:
+                    st.success(f"Website read successfully ({len(website_text)} chars). Generating topics...")
+                else:
+                    st.warning("Could not read website. Using form data only.")
+
         with st.spinner("Generating topics from your brand profile..."):
             try:
-                generated = ai_generate_topics(bd)
+                generated = ai_generate_topics(st.session_state.brand_data)
                 st.session_state.topics = generated
                 st.session_state.selected_topics = list(generated)
             except Exception as e:
@@ -534,7 +734,8 @@ elif st.session_state.step == 3:
         if topic not in st.session_state.prompts_by_topic:
             with st.spinner(f"Generating prompts for: {topic}..."):
                 try:
-                    prompts = ai_generate_prompts(topic, bd)
+                    # Pass full brand_data including cached website text
+                    prompts = ai_generate_prompts(topic, st.session_state.brand_data)
                     st.session_state.prompts_by_topic[topic] = prompts
                     st.session_state.selected_prompts[topic] = list(prompts)
                 except Exception as e:
@@ -643,6 +844,11 @@ elif st.session_state.step == 4:
                     business_type=detected_business_type,
                     user_competitors=competitors_list
                 )
+                # Filter false positive brand names from results
+                brand_data_detected["all_brands"] = [
+                    b for b in brand_data_detected.get("all_brands", [])
+                    if not is_false_positive_brand(b)
+                ]
 
                 linked_sites = extract_linked_sites(response_text)
 
