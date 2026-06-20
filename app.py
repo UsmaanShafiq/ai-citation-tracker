@@ -754,14 +754,46 @@ elif st.session_state.step == 2:
         selected_count = len(st.session_state.selected_topics)
         st.success(f"✓ {selected_count} topic{'s' if selected_count != 1 else ''} selected")
 
-        st.write("**AI Generated Topics** (uncheck to remove):")
-        for topic in st.session_state.topics:
+        st.write("**AI Generated Topics** (uncheck to remove, click ✏️ to edit):")
+        for t_idx, topic in enumerate(st.session_state.topics):
             checked = topic in st.session_state.selected_topics
-            new_checked = st.checkbox(f"✦ {topic}", value=checked, key=f"topic_check_{topic}")
-            if new_checked and topic not in st.session_state.selected_topics:
-                st.session_state.selected_topics.append(topic)
-            elif not new_checked and topic in st.session_state.selected_topics:
-                st.session_state.selected_topics.remove(topic)
+            col_check, col_edit = st.columns([8, 1])
+            with col_check:
+                new_checked = st.checkbox(f"✦ {topic}", value=checked, key=f"topic_check_{t_idx}")
+                if new_checked and topic not in st.session_state.selected_topics:
+                    st.session_state.selected_topics.append(topic)
+                elif not new_checked and topic in st.session_state.selected_topics:
+                    st.session_state.selected_topics.remove(topic)
+            with col_edit:
+                edit_key = f"topic_edit_mode_{t_idx}"
+                if st.button("✏️", key=f"topic_edit_btn_{t_idx}", help="Edit this topic"):
+                    st.session_state[edit_key] = True
+
+            # Show inline editor if edit mode is active
+            if st.session_state.get(f"topic_edit_mode_{t_idx}"):
+                new_val = st.text_input(
+                    "Edit topic",
+                    value=topic,
+                    key=f"topic_edit_input_{t_idx}",
+                    label_visibility="collapsed"
+                )
+                save_col, cancel_col = st.columns([1, 1])
+                with save_col:
+                    if st.button("✅ Save", key=f"topic_save_{t_idx}", use_container_width=True):
+                        new_val = new_val.strip()
+                        if new_val and new_val != topic:
+                            # Update in topics list
+                            was_selected = topic in st.session_state.selected_topics
+                            st.session_state.topics[t_idx] = new_val
+                            if was_selected:
+                                st.session_state.selected_topics.remove(topic)
+                                st.session_state.selected_topics.append(new_val)
+                        st.session_state[f"topic_edit_mode_{t_idx}"] = False
+                        st.rerun()
+                with cancel_col:
+                    if st.button("✖ Cancel", key=f"topic_cancel_{t_idx}", use_container_width=True):
+                        st.session_state[f"topic_edit_mode_{t_idx}"] = False
+                        st.rerun()
 
     st.divider()
     col_add1, col_add2 = st.columns([4, 1])
@@ -821,25 +853,58 @@ elif st.session_state.step == 3:
                     st.session_state.selected_prompts[topic] = [topic]
 
     # Display prompts per topic in accordion style
-    for topic in st.session_state.selected_topics:
+    for t_idx, topic in enumerate(st.session_state.selected_topics):
         prompts = st.session_state.prompts_by_topic.get(topic, [])
         selected = st.session_state.selected_prompts.get(topic, [])
 
         with st.expander(f"**{topic}** ({len(selected)} prompts selected)", expanded=True):
-            for prompt in prompts:
+            for p_idx, prompt in enumerate(prompts):
                 checked = prompt in selected
-                new_checked = st.checkbox(prompt, value=checked, key=f"prompt_{topic}_{prompt[:40]}")
-                if new_checked and prompt not in st.session_state.selected_prompts.get(topic, []):
-                    st.session_state.selected_prompts.setdefault(topic, []).append(prompt)
-                elif not new_checked and prompt in st.session_state.selected_prompts.get(topic, []):
-                    st.session_state.selected_prompts[topic].remove(prompt)
+                col_check, col_edit = st.columns([8, 1])
+                with col_check:
+                    cb_key = f"prompt_t{t_idx}_p{p_idx}"
+                    new_checked = st.checkbox(prompt, value=checked, key=cb_key)
+                    if new_checked and prompt not in st.session_state.selected_prompts.get(topic, []):
+                        st.session_state.selected_prompts.setdefault(topic, []).append(prompt)
+                    elif not new_checked and prompt in st.session_state.selected_prompts.get(topic, []):
+                        st.session_state.selected_prompts[topic].remove(prompt)
+                with col_edit:
+                    pedit_key = f"prompt_edit_mode_t{t_idx}_p{p_idx}"
+                    if st.button("✏️", key=f"prompt_edit_btn_t{t_idx}_p{p_idx}", help="Edit this prompt"):
+                        st.session_state[pedit_key] = True
+
+                # Inline editor for this prompt
+                if st.session_state.get(f"prompt_edit_mode_t{t_idx}_p{p_idx}"):
+                    new_val = st.text_input(
+                        "Edit prompt",
+                        value=prompt,
+                        key=f"prompt_edit_input_t{t_idx}_p{p_idx}",
+                        label_visibility="collapsed"
+                    )
+                    psave_col, pcancel_col = st.columns([1, 1])
+                    with psave_col:
+                        if st.button("✅ Save", key=f"prompt_save_t{t_idx}_p{p_idx}", use_container_width=True):
+                            new_val = new_val.strip()
+                            if new_val and new_val != prompt:
+                                was_selected = prompt in st.session_state.selected_prompts.get(topic, [])
+                                st.session_state.prompts_by_topic[topic][p_idx] = new_val
+                                if was_selected:
+                                    if prompt in st.session_state.selected_prompts.get(topic, []):
+                                        st.session_state.selected_prompts[topic].remove(prompt)
+                                    st.session_state.selected_prompts.setdefault(topic, []).append(new_val)
+                            st.session_state[f"prompt_edit_mode_t{t_idx}_p{p_idx}"] = False
+                            st.rerun()
+                    with pcancel_col:
+                        if st.button("✖ Cancel", key=f"prompt_cancel_t{t_idx}_p{p_idx}", use_container_width=True):
+                            st.session_state[f"prompt_edit_mode_t{t_idx}_p{p_idx}"] = False
+                            st.rerun()
 
             # Add custom prompt
-            custom_key = f"custom_prompt_{topic[:20]}"
+            custom_key = f"custom_prompt_t{t_idx}"
             custom_prompt = st.text_input("+ Add prompt", key=custom_key,
                                           placeholder="Type a custom prompt and press Enter")
             if custom_prompt.strip() and custom_prompt.strip() not in prompts:
-                if st.button("Add", key=f"add_prompt_btn_{topic[:20]}"):
+                if st.button("Add", key=f"add_prompt_btn_t{t_idx}"):
                     st.session_state.prompts_by_topic[topic].append(custom_prompt.strip())
                     st.session_state.selected_prompts.setdefault(topic, []).append(custom_prompt.strip())
                     st.rerun()
