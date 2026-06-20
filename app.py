@@ -322,7 +322,10 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + avoid_line +
         "- If competitors are listed above, use different ones across comparison prompts\n"
         "- Vary the 5 prompts: 1 short keyword, 1 best-of question, 1 comparison, 1 alternative-seeking, 1 persona\n"
-        "- Persona prompt must end with asking for specific " + solution_word + " recommendations\n"
+        "- Persona prompt format: start with 'I am a [specific role from target audience]', "
+        "add context about their situation, end with a direct question asking for specific " + solution_word + " recommendations\n"
+        "- Persona example style: 'I am a [role] at a [company type], looking for a " + solution_word + " that does [need]. What do you recommend?'\n"
+        "- Pick the persona role from the target audience listed above\n"
         + (f"- The short keyword prompt must include '{country}' to make it location-specific\n" if country and country.lower() != "global" else "") +
         "\nRespond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
