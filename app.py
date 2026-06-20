@@ -210,17 +210,24 @@ def ai_generate_topics(brand_data: dict) -> list:
         "Business type: " + business_type
     )
 
+    country = brand_data.get("country", "")
+    country_note = ""
+    if country and country.lower() not in ["global", ""]:
+        country_note = f"User is based in: {country}\n"
+
     prompt = (
         "You are tracking brand visibility in AI search tools like ChatGPT, Perplexity, and Gemini.\n\n"
         "Based on the brand information below, generate 5 short search topics that real people "
         "type into AI tools when they are looking for something in this niche.\n\n"
-        + context + "\n\n"
+        + context + "\n"
+        + country_note + "\n"
         "Generate topics that are:\n"
         "- Natural keyword phrases (3-7 words) that real users actually type\n"
         "- Specific enough to this niche that an AI would recommend brands in its answer\n"
         "- Varied: mix of comparison topics, recommendation topics, and use-case topics\n"
-        "- Do NOT include the brand name '" + brand_name + "' in any topic\n\n"
-        "Think about what someone would type when they want an AI to recommend "
+        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
+        + (f"- Where relevant, include the country '{country}' in 1-2 topics to reflect local search\n" if country and country.lower() not in ["global", "united states", ""] else "") +
+        "\nThink about what someone would type when they want an AI to recommend "
         "something in this space. Not how-to questions. Not definitions. "
         "Questions where the AI would name specific brands or services.\n\n"
         "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
@@ -239,11 +246,28 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     Exactly like traqer.ai - real questions people type into ChatGPT/Perplexity.
     Varied styles: direct search, comparison, persona-based, conversational.
     No hardcoded examples. No industry assumptions. Works for any niche globally.
+    Country is appended to prompts so results are location-aware and verifiable.
     """
     brand_name = brand_data["name"]
     business_type = brand_data.get("business_type", "")
     competitors = brand_data.get("competitors", [])
     website_text = brand_data.get("_website_text", "")
+    country = brand_data.get("country", "")
+
+    # Determine what to call the solution based on business type
+    # This makes persona prompts end with a recommendation request, not advice
+    is_service = any(w in business_type.lower() for w in ["service", "agency", "studio", "consultancy"])
+    solution_word = "agency or service provider" if is_service else "tool, software, or platform"
+
+    # Country context for location-aware prompts
+    country_line = ""
+    location_suffix = ""
+    if country and country.lower() not in ["global", "united states", ""]:
+        country_line = f"User country: {country}\n"
+        location_suffix = f" in {country}"
+    elif country and country.lower() == "united states":
+        country_line = f"User country: {country}\n"
+        location_suffix = ""  # US is default, no need to append
 
     # Competitor context - only if user entered them
     comp_line = ""
@@ -257,7 +281,8 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     niche_context = (
         "Niche/industry: " + ", ".join(brand_data.get("products", [])) + "\n"
         "Target audience: " + ", ".join(brand_data.get("customers", [])) + "\n"
-        "Business type: " + business_type
+        "Business type: " + business_type + "\n"
+        + country_line
     )
     if website_text:
         niche_context = "Website context:\n" + website_text[:800] + "\n\n" + niche_context
@@ -267,18 +292,19 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "For the topic below, generate 5 natural questions or search phrases that real people "
         "type into an AI tool when they want a recommendation in this niche.\n\n"
         "Topic: " + topic + "\n\n"
-        + niche_context + "\n\n"
+        + niche_context + "\n"
         + comp_line +
         "\nRules:\n"
         "- Questions must be natural - exactly what a real person would type\n"
         "- Each question should be different in style and angle:\n"
-        "  1. Short keyword phrase (what someone searches directly)\n"
-        "  2. Conversational question asking for the best option\n"
-        "  3. Comparison or alternative question\n"
-        "  4. Persona-based question (I am a [role] looking for...)\n"
-        "  5. Specific use-case question\n"
+        "  1. Short keyword phrase (direct search" + (f", include the country '{country}' if relevant" if country and country != "Global" else "") + ")\n"
+        "  2. Conversational question asking for the best option - must end with a request to name specific " + solution_word + "s\n"
+        "  3. Comparison or alternative question between specific competitors\n"
+        "  4. Persona-based question (I am a [role] looking for a " + solution_word + ", please recommend specific ones)\n"
+        "  5. Specific use-case question that ends with asking for specific recommendations\n"
         "- NEVER include the brand name '" + brand_name + "' in any question\n"
-        "- Questions should be specific enough that an AI would name actual brands in its answer\n\n"
+        "- Every question must be specific enough that an AI would name actual brands in its answer\n"
+        "- Persona questions MUST end with asking for specific recommendations, not general advice\n\n"
         "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
 
@@ -288,8 +314,13 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     brand_lower = brand_name.lower()
     clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
 
-    # Always include the bare topic as the first natural search
-    result = [topic] + [p for p in clean if p.lower() != topic.lower()]
+    # For non-US/non-Global countries, append country to the first topic prompt
+    # so the user can see the country is being used in actual queries
+    base_topic = topic
+    if location_suffix and not any(country.lower() in base_topic.lower() for _ in [1]):
+        base_topic = topic + location_suffix
+
+    result = [base_topic] + [p for p in clean if p.lower() != topic.lower()]
     return result[:5]
 
 # Common English words falsely detected as brand names - filter these out
@@ -888,7 +919,15 @@ elif st.session_state.step == 4:
     else:
         all_results = st.session_state.all_results
         st.subheader(f"Results: {brand_name}")
-        st.caption(f"Domain: {brand_domain} | Country: {bd.get('country', 'US')} | Business Type: {bd.get('business_type', '')}")
+        _country = bd.get('country', 'United States')
+        _btype = bd.get('business_type', '')
+        st.caption(f"Domain: {brand_domain} | Business Type: {_btype}")
+        if _country and _country != "Global":
+            st.info(
+                f"🌍 **Country context: {_country}** — Location is included in prompts where relevant. "
+                f"Check the Prompt column in results to confirm. "
+                f"Perplexity gives the most location-accurate results as it searches the live web."
+            )
 
         if not all_results:
             st.error("No results returned. Check your API keys and try again.")
