@@ -55,8 +55,14 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
 
     # ─── Competitor brand frequency ───────────────────────────────────────────
     # No hardcoded exclusion list - works for any industry.
-    # The LLM detection already handles brand extraction correctly.
-    # We only exclude the target brand itself from competitor rankings.
+    # We split competitors into two tiers:
+    # - Dominant platforms: appear in >80% of all prompts (Google, USPTO, etc.)
+    # - Real competitors: appear in <=80% of prompts (same-scale brands)
+    # This prevents small brands from being compared to trillion-dollar companies.
+
+    total_queries = len(results)
+    dominant_threshold = 0.8  # brands appearing in >80% of prompts are dominant platforms
+
     competitor_counts = defaultdict(int)
     for r in results:
         for brand in r["brands_detected"]["all_brands"]:
@@ -65,12 +71,23 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
                 continue
             competitor_counts[brand_clean] += 1
 
-    # Sort by frequency
-    competitor_ranking = sorted(
-        competitor_counts.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    # Separate into dominant platforms vs real competitors
+    dominant_platforms = []
+    real_competitors = []
+
+    for brand, count in sorted(competitor_counts.items(), key=lambda x: x[1], reverse=True):
+        appearance_rate = count / total_queries if total_queries > 0 else 0
+        if appearance_rate > dominant_threshold:
+            dominant_platforms.append((brand, count, round(appearance_rate * 100)))
+        else:
+            real_competitors.append((brand, count))
+
+    # Sort both lists by frequency
+    dominant_platforms = sorted(dominant_platforms, key=lambda x: x[1], reverse=True)
+    real_competitors = sorted(real_competitors, key=lambda x: x[1], reverse=True)
+
+    # Keep competitor_ranking as combined list for backward compatibility
+    competitor_ranking = [(b, c) for b, c in real_competitors] + [(b, c) for b, c, _ in dominant_platforms]
 
     # ─── Position score ───────────────────────────────────────────────────────
     position_scores = []
@@ -116,6 +133,8 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
         "citation_share_by_tool": citation_share_by_tool,
         "citation_share_by_category": citation_share_by_category,
         "competitor_ranking": competitor_ranking,
+        "real_competitors": real_competitors,
+        "dominant_platforms": dominant_platforms,
         "context_breakdown": dict(context_counts)
     }
 

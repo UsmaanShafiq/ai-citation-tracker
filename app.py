@@ -631,9 +631,12 @@ if st.session_state.step == 1:
         country = st.selectbox("Country", options=_country_options, index=_country_idx)
     with col4:
         _saved_comps = ", ".join(_saved.get("competitors", []))
-        competitors_input = st.text_input("Competitors (optional)",
-                                          value=_saved_comps,
-                                          placeholder="Animalz, Siege Media, Grow and Convert")
+        competitors_input = st.text_input(
+            "Your Direct Competitors (recommended)",
+            value=_saved_comps,
+            placeholder="e.g. PatSnap, Ambercite, The Lens",
+            help="Add brands at a similar scale to yours. These will be tracked separately from large dominant platforms like Google."
+        )
 
     st.divider()
 
@@ -988,15 +991,31 @@ elif st.session_state.step == 4:
                                     st.markdown(highlighted[:3000])
 
             # ── Competitor ranking ────────────────────────────────────────
-            st.subheader("Top Competitor Brands Detected")
-            if scores["competitor_ranking"]:
-                comp_df = pd.DataFrame(scores["competitor_ranking"][:15], columns=["Brand", "Mentions"])
-                comp_df["Share %"] = comp_df["Mentions"].apply(
-                    lambda x: f"{round((x / scores['total_queries_run']) * 100)}%"
+            st.subheader("Competitor Brands Detected")
+
+            real_competitors = scores.get("real_competitors", [])
+            dominant_platforms = scores.get("dominant_platforms", [])
+            total_q = scores["total_queries_run"]
+
+            if real_competitors:
+                st.markdown("**Direct Competitors** (brands at a similar scale to yours)")
+                st.caption("These brands appeared in some but not all AI responses — likely your real competition.")
+                comp_df = pd.DataFrame(real_competitors[:15], columns=["Brand", "Mentions"])
+                comp_df["Appearance Rate"] = comp_df["Mentions"].apply(
+                    lambda x: f"{round((x / total_q) * 100)}%"
                 )
                 st.dataframe(comp_df, use_container_width=True, hide_index=True)
             else:
-                st.info("No competitor brands detected.")
+                st.info("No direct competitors detected.")
+
+            if dominant_platforms:
+                st.markdown("**Dominant Platforms** (major players that appear in most AI responses)")
+                st.caption("These brands appear in over 80% of AI responses. They are large established platforms, not your direct competitors.")
+                dom_df = pd.DataFrame(
+                    [(b, c, f"{r}%") for b, c, r in dominant_platforms[:10]],
+                    columns=["Brand", "Mentions", "Appearance Rate"]
+                )
+                st.dataframe(dom_df, use_container_width=True, hide_index=True)
 
             # ── Brand mention context ────────────────────────────────────
             st.subheader("How Your Brand Was Mentioned")
