@@ -238,7 +238,10 @@ def run_on_claude(query: str) -> str:
 # The frontend reads this to build the toggle UI.
 # =============================================================================
 
-ALL_TOOLS = {
+# =============================================================================
+# GROQ TOOLS - currently disabled. To re-enable, move them back into ALL_TOOLS.
+# =============================================================================
+DISABLED_TOOLS = {
     "Groq_Llama3": {
         "fn": run_on_groq_llama,
         "free": True,
@@ -255,6 +258,9 @@ ALL_TOOLS = {
         "free_limit": 14400,
         "description": "Mixtral 8x7B via Groq. Free tier."
     },
+}
+
+ALL_TOOLS = {
     "Perplexity": {
         "fn": run_on_perplexity,
         "free": False,
