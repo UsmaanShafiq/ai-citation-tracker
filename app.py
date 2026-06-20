@@ -322,16 +322,15 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "- Do NOT include any year numbers like 2023, 2024, 2025 - they go stale. Use natural language instead\n"
         + avoid_line +
         "- If competitors are listed above, use different ones across comparison prompts\n"
-        "\nThe 5 prompts MUST follow this exact structure, one of each type:\n"
-        "1. SHORT KEYWORD: 3-6 word search phrase\n"
+        "\nGenerate EXACTLY 4 prompts following this structure:\n"
+        "1. LOCATION KEYWORD: short 3-6 word phrase" + (f" that includes '{country}'" if country and country.lower() != "global" else "") + "\n"
         "2. BEST-OF QUESTION: ask which is the best " + solution_word + " for a specific use case\n"
         "3. COMPARISON: compare two specific competitors against each other\n"
-        "4. ALTERNATIVE: ask for alternatives to one specific competitor\n"
-        "5. PERSONA: start with 'I am a [role from target audience] at a [company type],' "
-        "describe their specific need, end with 'what " + solution_word + " do you recommend?'\n"
-        "   Example: 'I am a patent attorney at a tech startup, I need to run prior art searches quickly and affordably. What tool do you recommend?'\n"
-        + (f"- The short keyword prompt (prompt 1) must include '{country}'\n" if country and country.lower() != "global" else "") +
-        "\nRespond ONLY with a JSON array of exactly 5 strings. No explanation, no markdown."
+        "4. PERSONA: start with 'I am a [specific role from the target audience] at a [company type],' "
+        "describe their specific need in one sentence, end with 'what " + solution_word + " do you recommend?'\n"
+        "   Good persona example: 'I am a patent attorney at a tech startup, I need to run prior art searches quickly and affordably. What tool do you recommend?'\n"
+        "   Bad persona example: 'What are the best tools available?'\n"
+        "\nRespond ONLY with a JSON array of exactly 4 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
