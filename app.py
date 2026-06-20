@@ -139,19 +139,36 @@ def fetch_brand_website(domain: str) -> str:
     else:
         url = domain
 
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+
+    # Try multiple URL variants to maximize success rate
+    urls_to_try = [url]
+    if not url.startswith("https://www."):
+        urls_to_try.append(url.replace("https://", "https://www.", 1))
+    if url.startswith("https://"):
+        urls_to_try.append(url.replace("https://", "http://", 1))
+
+    html = ""
+    for try_url in urls_to_try:
+        try:
+            response = requests.get(try_url, headers=headers, timeout=12)
+            response.raise_for_status()
+            html = response.text
+            break
+        except Exception:
+            continue
+
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        html = response.text
+        if not html:
+            return ""
 
         # Remove scripts, styles, nav, footer boilerplate
         import re as _re
@@ -246,8 +263,28 @@ def ai_generate_topics(brand_data: dict) -> list:
     raw = _call_ai_for_json(prompt)
     topics = _parse_json_list(raw)
     brand_lower = brand_name.lower()
-    topics = [t.strip() for t in topics if t.strip() and brand_lower not in t.lower()]
-    return topics[:5]
+
+    # Filter out topics that are too vague or likely to produce wrong results
+    # These are patterns that make ChatGPT give generic advice instead of brand names
+    # Works for any industry - just checking for structural/intent issues
+    bad_patterns = [
+        "strategies", "tips", "how to", "examples", "guide", "tutorial",
+        "best practices", "introduction", "overview", "explained", "meaning",
+        "definition", "what is", "benefits of", "advantages of"
+    ]
+    filtered = []
+    for t in topics:
+        t = t.strip()
+        if not t:
+            continue
+        if brand_lower in t.lower():
+            continue
+        t_lower = t.lower()
+        if any(bp in t_lower for bp in bad_patterns):
+            continue
+        filtered.append(t)
+
+    return filtered[:5]
 
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
@@ -275,13 +312,25 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             "Who buys from them: " + customers
         )
 
-    # Build competitor context if user entered competitors
+    # Build competitor context - rotate which competitors are used
+    # so different topics get different comparison pairs
     competitors = brand_data.get("competitors", [])
     competitor_context = ""
     if competitors:
+        # Use topic name to deterministically pick different competitors per topic
+        # This ensures variety across topics without randomness
+        topic_hash = sum(ord(c) for c in topic) % max(len(competitors), 1)
+        # Pick 2 competitors starting from the hash offset
+        rotated = competitors[topic_hash:] + competitors[:topic_hash]
+        comp_for_comparison = rotated[:2] if len(rotated) >= 2 else rotated
+        comp_for_alternative = rotated[2:3] if len(rotated) >= 3 else rotated[:1]
+
         competitor_context = (
-            "\nKnown competitors in this space: " + ", ".join(competitors[:5]) +
-            "\nInclude 1-2 prompts asking for alternatives to or comparisons with these specific competitors."
+            "\nKnown competitors in this space: " + ", ".join(competitors) +
+            "\nFor the COMPARISON prompt, compare these two specifically: " +
+            " vs ".join(comp_for_comparison) +
+            "\nFor the ALTERNATIVE prompt, ask for alternatives to: " +
+            (comp_for_alternative[0] if comp_for_alternative else competitors[0])
         )
 
     # Get country for location-aware prompts
