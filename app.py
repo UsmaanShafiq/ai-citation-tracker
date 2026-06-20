@@ -268,38 +268,43 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             "Who buys from them: " + customers
         )
 
+    # Build competitor context if user entered competitors
+    competitors = brand_data.get("competitors", [])
+    competitor_context = ""
+    if competitors:
+        competitor_context = (
+            "\nKnown competitors in this space: " + ", ".join(competitors[:5]) +
+            "\nInclude 1-2 prompts asking for alternatives to or comparisons with these specific competitors."
+        )
+
     prompt = (
-        "You are an AI search visibility expert helping track how often commercial tools and services "
+        "You are an AI search visibility expert helping track how often commercial tools "
         "appear in AI-generated answers.\n"
-        "For the topic below, generate 5 prompts that a real BUYER would type into ChatGPT, Perplexity, "
-        "or Gemini when actively looking for a tool or service to use.\n\n"
+        "For the topic below, generate 5 prompts that a real BUYER would type into ChatGPT or Perplexity "
+        "when actively looking for a tool or service to use.\n\n"
         "Topic: " + topic + "\n\n"
         "Brand context:\n"
-        + context_block + "\n"
+        + context_block
+        + competitor_context + "\n"
         "Business type: " + business_type + "\n\n"
         "STRICT RULES:\n"
-        "- NEVER mention the brand name \"" + brand_name + "\" in any prompt\n"
-        "- NEVER mention any specific brand or company name in any prompt\n"
-        "- Prompts must have COMMERCIAL INTENT - the person wants to find, compare, or buy a tool/service\n"
+        "- NEVER mention \"" + brand_name + "\" in any prompt\n"
+        "- Prompts must have COMMERCIAL INTENT - finding, comparing, or buying a tool\n"
         "- Do NOT write informational prompts like \'what is X\' or \'how does X work\'\n"
-        "- Do NOT write prompts that lead to government bodies, official databases, or Wikipedia\n"
-        "- DO write prompts like: best X tool for Y, alternatives to expensive X, X software for Z use case\n"
-        "- Think: startup founder or professional who wants a specific tool recommendation right now\n"
-        "- Vary style: 1 short keyword, 2 comparison/alternative questions, 1 use-case specific, 1 persona-based\n\n"
-        "GOOD prompts: \'best AI patent search tool for startups\', \'affordable alternative to PatSnap\', "
-        "\'which tool finds prior art faster\', \'I am a solo inventor looking for patent search software\'\n"
-        "BAD prompts: \'what is prior art\', \'how does patent search work\', \'USPTO database guide\'\n\n"
+        "- Do NOT write prompts about government bodies or official databases\n"
+        "- If competitors are provided above, use their names in 1-2 comparison prompts\n"
+        "- Vary style: 1 short keyword, 2 comparison/alternative, 1 use-case specific, 1 persona-based\n\n"
+        "GOOD: \'best AI patent search tool for startups\', \'affordable alternative to PatSnap\', "
+        "\'which tool finds prior art faster\', \'I am a solo inventor needing patent search software\'\n"
+        "BAD: \'what is prior art\', \'how does patent search work\', \'USPTO database guide\'\n\n"
         "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
     )
 
     raw = _call_ai_for_json(prompt)
     prompts = _parse_json_list(raw)
 
-    # Strict filter: remove any prompt that contains the brand name
     brand_lower = brand_name.lower()
     clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
-
-    # Always include the bare topic as first prompt (most natural search)
     result = [topic] + [p for p in clean if p.lower() != topic.lower()]
     return result[:5]
 
@@ -1013,14 +1018,33 @@ elif st.session_state.step == 4:
 
             with tab1:
                 st.caption("Commercial tools and services at a similar scale to yours — your real competition.")
-                if real_competitors:
-                    comp_df = pd.DataFrame(real_competitors[:20], columns=["Brand", "Mentions"])
+
+                # Always show user-entered competitors even if not detected
+                # This gives them a 0% visibility baseline which is useful data
+                user_competitors = bd.get("competitors", [])
+                detected_names = [b.lower() for b, _ in real_competitors]
+
+                # Add any user competitors that were not detected with 0 mentions
+                zero_mention_competitors = [
+                    (comp, 0) for comp in user_competitors
+                    if comp.strip() and comp.strip().lower() not in detected_names
+                ]
+
+                all_competitors_display = list(real_competitors[:20]) + zero_mention_competitors
+
+                if all_competitors_display:
+                    comp_df = pd.DataFrame(all_competitors_display, columns=["Brand", "Mentions"])
                     comp_df["Appearance Rate"] = comp_df["Mentions"].apply(
-                        lambda x: f"{round((x / total_q) * 100)}%"
+                        lambda x: f"{round((x / total_q) * 100)}%" if total_q > 0 else "0%"
+                    )
+                    comp_df["Status"] = comp_df["Mentions"].apply(
+                        lambda x: "✅ Detected" if x > 0 else "⚪ Not mentioned"
                     )
                     st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                    if zero_mention_competitors:
+                        st.caption(f"⚪ {len(zero_mention_competitors)} competitor(s) you entered were not mentioned by AI in this run.")
                 else:
-                    st.info("No direct competitors detected. Try adding known competitors in Step 1 for better tracking.")
+                    st.info("No direct competitors detected. Add known competitors in Step 1 for better tracking.")
 
             with tab2:
                 st.caption("Large established commercial platforms. These dominate AI responses but are not your direct competition.")
