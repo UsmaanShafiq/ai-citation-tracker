@@ -387,17 +387,27 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
         st.caption(help_text)
 
     if tags:
-        pills_html = "".join([
-            f'<span style="display:inline-block;background:#1e3a5f;color:#7dd3fc;'
-            f'border:1px solid #2563eb;border-radius:999px;padding:3px 12px;'
-            f'margin:2px 4px 2px 0;font-size:13px;">{t}</span>'
-            for t in tags
-        ])
-        st.markdown(f'<div style="margin-bottom:6px">{pills_html}</div>', unsafe_allow_html=True)
+        # Render each pill with an individual × remove button
+        pill_cols = st.columns(len(tags) if len(tags) <= 8 else 8)
+        remove_idx = None
+        for idx, tag in enumerate(tags):
+            col_idx = idx % 8
+            with pill_cols[col_idx]:
+                # Pill with × button inline
+                pill_html = (
+                    f'<span style="display:inline-flex;align-items:center;background:#1e3a5f;'
+                    f'color:#7dd3fc;border:1px solid #2563eb;border-radius:999px;'
+                    f'padding:3px 10px;margin:2px 2px 4px 0;font-size:13px;">{tag}</span>'
+                )
+                st.markdown(pill_html, unsafe_allow_html=True)
+                if st.button("×", key=f"{session_key}_remove_{idx}_{tag[:10]}", help=f"Remove {tag}"):
+                    remove_idx = idx
+        if remove_idx is not None:
+            st.session_state[session_key].pop(remove_idx)
+            st.rerun()
 
     col_in, col_add, col_clear = st.columns([5, 1, 1])
     with col_in:
-        # Include the counter in the key so incrementing it resets the field
         new_val = st.text_input(
             label,
             key=f"{session_key}_input_{st.session_state[clear_key]}",
@@ -414,13 +424,12 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
                     st.session_state[session_key].append(item)
                     added = True
             if added:
-                # Increment counter to force input field to reset to empty
                 st.session_state[clear_key] += 1
                 st.rerun()
     with col_clear:
         if tags:
             st.write("")
-            if st.button("Clear", key=f"{session_key}_clear_btn", use_container_width=True):
+            if st.button("Clear all", key=f"{session_key}_clear_btn", use_container_width=True):
                 st.session_state[session_key] = []
                 st.session_state[clear_key] += 1
                 st.rerun()
@@ -570,7 +579,7 @@ with st.sidebar:
     if st.button("🔄 Start Over", use_container_width=True):
         for key in ["step", "brand_data", "topics", "selected_topics",
                     "prompts_by_topic", "selected_prompts", "all_results", "run_complete",
-                    "step1_products", "step1_customers", "step1_key_features"]:
+                    "step1_products", "step1_customers", "step1_key_features", "step1_competitors"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
@@ -616,6 +625,8 @@ if st.session_state.step == 1:
         st.session_state["step1_customers"] = list(_saved["customers"])
     if "step1_key_features" not in st.session_state and _saved.get("key_features"):
         st.session_state["step1_key_features"] = list(_saved["key_features"])
+    if "step1_competitors" not in st.session_state and _saved.get("competitors"):
+        st.session_state["step1_competitors"] = list(_saved["competitors"])
 
     products_list = tag_input(
         "Your Products and Services",
@@ -647,21 +658,18 @@ if st.session_state.step == 1:
         help="Controls how competitors are detected"
     )
 
-    col3, col4 = st.columns(2)
-    with col3:
-        _country_options = ["United States", "United Kingdom", "Canada", "Australia",
-                             "Germany", "India", "Pakistan", "Global"]
-        _country_default = _saved.get("country", "United States")
-        _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
-        country = st.selectbox("Country", options=_country_options, index=_country_idx)
-    with col4:
-        _saved_comps = ", ".join(_saved.get("competitors", []))
-        competitors_input = st.text_input(
-            "Your Direct Competitors (recommended)",
-            value=_saved_comps,
-            placeholder="e.g. PatSnap, Ambercite, The Lens",
-            help="Add brands at a similar scale to yours. These will be tracked separately from large dominant platforms like Google."
-        )
+    _country_options = ["United States", "United Kingdom", "Canada", "Australia",
+                         "Germany", "India", "Pakistan", "Global"]
+    _country_default = _saved.get("country", "United States")
+    _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
+    country = st.selectbox("Country", options=_country_options, index=_country_idx)
+
+    competitors_list_input = tag_input(
+        "Your Direct Competitors (recommended)",
+        session_key="step1_competitors",
+        placeholder="Type a competitor name and click Add",
+        help_text="Add brands at a similar scale to yours. These will be tracked separately from dominant platforms like Google."
+    )
 
     st.divider()
 
@@ -677,7 +685,7 @@ if st.session_state.step == 1:
                 "key_features": key_features_list,
                 "business_type": business_type,
                 "country": country,
-                "competitors": [c.strip() for c in competitors_input.split(",") if c.strip()],
+                "competitors": competitors_list_input,
             }
             st.session_state.step = 2
             st.rerun()
