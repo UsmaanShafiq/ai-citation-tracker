@@ -256,8 +256,8 @@ def ai_generate_topics(brand_data: dict) -> list:
         "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
         "- Vary the topics: mix of direct search, comparison, and use-case topics\n"
         + (f"- Include '{country}' in 1-2 topics where it makes the search more specific\n" if country and country.lower() != "global" else "") +
-        "\nGenerate exactly 5 short topics (3-8 words each).\n"
-        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
+        "\nGenerate exactly 7 short topics (3-8 words each).\n"
+        "Respond ONLY with a JSON array of 7 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
@@ -1429,5 +1429,5 @@ elif st.session_state.step == 4:
         "- BAD example: \'leading thought leadership consultants\' | GOOD: \'top thought leadership content agencies\'\\n"
         "- Vary the topics: mix of direct search, comparison, and use-case topics\\n"
         + (f"- Include \'{country}\' in 1 topic\\n" if country and country.lower() not in ["global", "united states", ""] else "") +
-        "\\nGenerate exactly 5 short topics (3-8 words each).\\n"
-        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown.")
+        "\\nGenerate exactly 7 short topics (3-8 words each).\\n"
+        "Respond ONLY with a JSON array of 7 strings. No explanation, no markdown.")
