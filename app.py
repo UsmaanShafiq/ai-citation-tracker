@@ -373,7 +373,7 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
         st.caption(help_text)
 
     if tags:
-        # Show pills as inline HTML - clean and compact
+        # Show all pills as styled HTML in one flowing line
         pills_html = "".join([
             f'<span style="display:inline-block;background:#1e3a5f;color:#7dd3fc;'
             f'border:1px solid #2563eb;border-radius:999px;padding:4px 14px;'
@@ -381,20 +381,19 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
             for t in tags
         ])
         st.markdown(
-            f'<div style="padding:8px 0 4px 0;line-height:2.2;">{pills_html}</div>',
+            f'<div style="padding:6px 0 8px 0;line-height:2.4;">{pills_html}</div>',
             unsafe_allow_html=True
         )
 
-        # Remove buttons in a clean compact row below pills
-        st.caption("Click × to remove a tag:")
-        remove_cols = st.columns(min(len(tags), 6))
+        # Individual remove buttons in a compact row
         remove_idx = None
+        num_cols = min(len(tags), 5)
+        rm_cols = st.columns(num_cols)
         for idx, tag in enumerate(tags):
-            col_idx = idx % 6
-            with remove_cols[col_idx]:
-                short = tag[:12] + "…" if len(tag) > 12 else tag
+            with rm_cols[idx % num_cols]:
+                short = (tag[:14] + "…") if len(tag) > 14 else tag
                 if st.button(
-                    f"× {short}",
+                    f"✕ {short}",
                     key=f"{session_key}_rm_{idx}",
                     use_container_width=True,
                     help=f"Remove: {tag}"
@@ -403,9 +402,8 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
         if remove_idx is not None:
             st.session_state[session_key].pop(remove_idx)
             st.rerun()
-        st.write("")
 
-    # Input row
+    # Input + Add + Clear row
     col_in, col_add, col_clear = st.columns([5, 1, 1])
     with col_in:
         new_val = st.text_input(
