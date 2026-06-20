@@ -181,123 +181,105 @@ def fetch_brand_website(domain: str) -> str:
 
 
 def ai_generate_topics(brand_data: dict) -> list:
-    business_type = brand_data.get("business_type", "")
+    """
+    Generates 5 natural search topics the way traqer.ai does it.
+    Topics are short keyword phrases real people type into AI tools
+    when they want a recommendation in this niche.
+    No intent filters. No industry assumptions. Just natural search behavior.
+    """
     products = ", ".join(brand_data.get("products", []))
     customers = ", ".join(brand_data.get("customers", []))
     key_features = ", ".join(brand_data.get("key_features", []))
+    business_type = brand_data.get("business_type", "")
     domain = brand_data.get("domain", "")
+    brand_name = brand_data["name"]
 
-    # Visit the brand website for accurate context
-    website_text = ""
-    if domain:
+    # Visit website for real context
+    website_text = brand_data.get("_website_text", "")
+    if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    # Build context block - website content takes priority, form data as supplement
+    context = ""
     if website_text:
-        context_block = (
-            "WEBSITE CONTENT (scraped directly from their homepage - use this as primary source of truth):\n"
-            + website_text[:2000]
-            + "\n\n"
-            "FORM DATA (entered by user - use to supplement website content):\n"
-            "What they do: " + products + "\n"
-            "Who they serve: " + customers + "\n"
-            "Key differentiators: " + key_features + "\n"
-        )
-    else:
-        # Fallback: no website content, use form data only
-        context_block = (
-            "BRAND PROFILE (entered by user):\n"
-            "What they do: " + products + "\n"
-            "Who they serve: " + customers + "\n"
-            "Key differentiators: " + key_features + "\n"
-        )
+        context = "Website content:\n" + website_text[:2000] + "\n\n"
+    context += (
+        "Brand: " + brand_name + "\n"
+        "What they offer: " + products + "\n"
+        "Who they serve: " + customers + "\n"
+        "Key differentiators: " + key_features + "\n"
+        "Business type: " + business_type
+    )
 
     prompt = (
-        "You are an AI search visibility expert helping track how often brands appear in AI-generated answers.\n"
-        "Your job is to generate realistic search topics that a potential BUYER would type into an AI tool "
-        "like ChatGPT, Perplexity, or Gemini when looking for a solution like this brand.\n\n"
-        "IMPORTANT RULES:\n"
-        "- Read ALL the brand information below carefully before generating anything\n"
-        "- Infer the correct meaning of ALL industry terms and abbreviations from the brand context\n"
-        "- Do NOT assume any fixed meaning for abbreviations - let the brand content guide you\n"
-        "- Topics must reflect what a real buyer searches for, NOT what the brand wants to be known for\n"
-        "- Do NOT include the brand name in any topic\n"
-        "- Do NOT generate topics about software tools if this is a service/agency business\n"
-        "- Business type: " + business_type + "\n"
-        "- Think like a buyer who does not know this brand yet but has a problem this brand solves\n\n"
-        "Brand: " + brand_data["name"] + "\n"
-        "Domain: " + domain + "\n"
-        "Country: " + brand_data.get("country", "United States") + "\n\n"
-        + context_block +
-        "\nBased on ALL the information above, generate exactly 5 short keyword-style search topics (3-8 words each).\n"
-        "Each topic must represent a genuine search intent a potential customer would have.\n"
-        "NEVER include the brand name in any topic.\n\n"
-        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
+        "You are tracking brand visibility in AI search tools like ChatGPT, Perplexity, and Gemini.\n\n"
+        "Based on the brand information below, generate 5 short search topics that real people "
+        "type into AI tools when they are looking for something in this niche.\n\n"
+        + context + "\n\n"
+        "Generate topics that are:\n"
+        "- Natural keyword phrases (3-7 words) that real users actually type\n"
+        "- Specific enough to this niche that an AI would recommend brands in its answer\n"
+        "- Varied: mix of comparison topics, recommendation topics, and use-case topics\n"
+        "- Do NOT include the brand name '" + brand_name + "' in any topic\n\n"
+        "Think about what someone would type when they want an AI to recommend "
+        "something in this space. Not how-to questions. Not definitions. "
+        "Questions where the AI would name specific brands or services.\n\n"
+        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
     topics = _parse_json_list(raw)
-    # Filter out any topic that accidentally contains the brand name
-    brand_lower = brand_data["name"].lower()
+    brand_lower = brand_name.lower()
     topics = [t.strip() for t in topics if t.strip() and brand_lower not in t.lower()]
     return topics[:5]
 
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
+    """
+    Generates 5 natural question variations for a topic.
+    Exactly like traqer.ai - real questions people type into ChatGPT/Perplexity.
+    Varied styles: direct search, comparison, persona-based, conversational.
+    No hardcoded examples. No industry assumptions. Works for any niche globally.
+    """
     brand_name = brand_data["name"]
-    products = ", ".join(brand_data.get("products", []))
-    customers = ", ".join(brand_data.get("customers", []))
     business_type = brand_data.get("business_type", "")
-    domain = brand_data.get("domain", "")
-
-    # Reuse cached website text if already fetched, else fetch again
-    website_text = brand_data.get("_website_text", "")
-    if not website_text and domain:
-        website_text = fetch_brand_website(domain)
-
-    # Build context block
-    if website_text:
-        context_block = (
-            "Website content (primary source of truth for what this brand does):\n"
-            + website_text[:1500]
-            + "\n\nForm data: " + products + " | Customers: " + customers
-        )
-    else:
-        context_block = (
-            "What they offer: " + products + "\n"
-            "Who buys from them: " + customers
-        )
-
-    # Build competitor context if user entered competitors
     competitors = brand_data.get("competitors", [])
-    competitor_context = ""
+    website_text = brand_data.get("_website_text", "")
+
+    # Competitor context - only if user entered them
+    comp_line = ""
     if competitors:
-        competitor_context = (
-            "\nKnown competitors in this space: " + ", ".join(competitors[:5]) +
-            "\nInclude 1-2 prompts asking for alternatives to or comparisons with these specific competitors."
+        comp_line = (
+            "Known competitors in this space: " + ", ".join(competitors[:5]) + "\n"
+            "Include 1 prompt that compares or asks for alternatives to one of these competitors.\n"
         )
+
+    # Brief niche context so AI understands the space
+    niche_context = (
+        "Niche/industry: " + ", ".join(brand_data.get("products", [])) + "\n"
+        "Target audience: " + ", ".join(brand_data.get("customers", [])) + "\n"
+        "Business type: " + business_type
+    )
+    if website_text:
+        niche_context = "Website context:\n" + website_text[:800] + "\n\n" + niche_context
 
     prompt = (
-        "You are an AI search visibility expert helping track how often commercial tools "
-        "appear in AI-generated answers.\n"
-        "For the topic below, generate 5 prompts that a real BUYER would type into ChatGPT or Perplexity "
-        "when actively looking for a tool or service to use.\n\n"
+        "You are tracking brand visibility in AI search tools like ChatGPT, Perplexity, and Gemini.\n\n"
+        "For the topic below, generate 5 natural questions or search phrases that real people "
+        "type into an AI tool when they want a recommendation in this niche.\n\n"
         "Topic: " + topic + "\n\n"
-        "Brand context:\n"
-        + context_block
-        + competitor_context + "\n"
-        "Business type: " + business_type + "\n\n"
-        "STRICT RULES:\n"
-        "- NEVER mention \"" + brand_name + "\" in any prompt\n"
-        "- Prompts must have COMMERCIAL INTENT - finding, comparing, or buying a tool\n"
-        "- Do NOT write informational prompts like \'what is X\' or \'how does X work\'\n"
-        "- Do NOT write prompts about government bodies or official databases\n"
-        "- If competitors are provided above, use their names in 1-2 comparison prompts\n"
-        "- Vary style: 1 short keyword, 2 comparison/alternative, 1 use-case specific, 1 persona-based\n\n"
-        "GOOD: \'best AI patent search tool for startups\', \'affordable alternative to PatSnap\', "
-        "\'which tool finds prior art faster\', \'I am a solo inventor needing patent search software\'\n"
-        "BAD: \'what is prior art\', \'how does patent search work\', \'USPTO database guide\'\n\n"
-        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
+        + niche_context + "\n\n"
+        + comp_line +
+        "\nRules:\n"
+        "- Questions must be natural - exactly what a real person would type\n"
+        "- Each question should be different in style and angle:\n"
+        "  1. Short keyword phrase (what someone searches directly)\n"
+        "  2. Conversational question asking for the best option\n"
+        "  3. Comparison or alternative question\n"
+        "  4. Persona-based question (I am a [role] looking for...)\n"
+        "  5. Specific use-case question\n"
+        "- NEVER include the brand name '" + brand_name + "' in any question\n"
+        "- Questions should be specific enough that an AI would name actual brands in its answer\n\n"
+        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
@@ -305,9 +287,10 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     brand_lower = brand_name.lower()
     clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
+
+    # Always include the bare topic as the first natural search
     result = [topic] + [p for p in clean if p.lower() != topic.lower()]
     return result[:5]
-
 
 # Common English words falsely detected as brand names - filter these out
 BRAND_FALSE_POSITIVES = {
@@ -920,7 +903,52 @@ elif st.session_state.step == 4:
             c3.metric("Position Score", f"{scores['position_score_pct']}%")
             c4.metric("Topics Tracked", len(st.session_state.selected_topics))
 
-            # ── Visibility per model ──────────────────────────────────────
+            # ── Charts ────────────────────────────────────────────────────
+            st.subheader("Visibility Overview")
+            chart_col1, chart_col2 = st.columns(2)
+
+            with chart_col1:
+                # Bar chart: visibility % per AI model
+                tool_chart_data = {
+                    tool: data["share_pct"]
+                    for tool, data in scores["citation_share_by_tool"].items()
+                }
+                if tool_chart_data:
+                    chart_df = pd.DataFrame({
+                        "AI Model": list(tool_chart_data.keys()),
+                        "Visibility %": list(tool_chart_data.values())
+                    })
+                    st.markdown("**Visibility % by AI Model**")
+                    st.bar_chart(chart_df.set_index("AI Model"), use_container_width=True, color="#2563eb")
+
+            with chart_col2:
+                # Horizontal bar chart: visibility % per topic
+                topic_scores = calculate_citation_share_by_topic(all_results, brand_name)
+                if topic_scores:
+                    topic_df = pd.DataFrame({
+                        "Topic": [t[:35] + "..." if len(t) > 35 else t for t in topic_scores.keys()],
+                        "Visibility %": [v["share_pct"] for v in topic_scores.values()]
+                    })
+                    st.markdown("**Visibility % by Topic**")
+                    st.bar_chart(topic_df.set_index("Topic"), use_container_width=True, color="#16a34a")
+
+            # Context breakdown donut-style using metrics
+            ctx = scores["context_breakdown"]
+            total_ctx = sum(ctx.values()) or 1
+            st.markdown("**How Your Brand Was Mentioned**")
+            ctx_cols = st.columns(4)
+            ctx_labels = {
+                "recommended": ("🟢 Recommended", "#16a34a"),
+                "mentioned": ("🔵 Mentioned", "#2563eb"),
+                "warned_against": ("🔴 Warned Against", "#dc2626"),
+                "not_mentioned": ("⚪ Not Mentioned", "#6b7280"),
+            }
+            for i, (key, (label, _)) in enumerate(ctx_labels.items()):
+                count = ctx.get(key, 0)
+                pct = round((count / total_ctx) * 100)
+                ctx_cols[i].metric(label, f"{count}", f"{pct}% of responses")
+
+            # ── Visibility per model table ────────────────────────────────
             st.subheader("Visibility % by AI Model")
             tool_rows = []
             for tool, data in scores["citation_share_by_tool"].items():
@@ -1068,14 +1096,7 @@ elif st.session_state.step == 4:
                 else:
                     st.info("No government or official bodies detected.")
 
-            # ── Brand mention context ────────────────────────────────────
-            st.subheader("How Your Brand Was Mentioned")
-            ctx = scores["context_breakdown"]
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Recommended", ctx.get("recommended", 0))
-            c2.metric("Mentioned", ctx.get("mentioned", 0))
-            c3.metric("Warned Against", ctx.get("warned_against", 0))
-            c4.metric("Not Mentioned", ctx.get("not_mentioned", 0))
+
 
             # ── Full results table ────────────────────────────────────────
             st.subheader("Full Results Table")
