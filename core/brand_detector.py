@@ -126,39 +126,89 @@ def pass_two_llm_detection(
     business_type: str = "software"
 ) -> dict:
     """
-    Universal LLM-based brand detection.
-    Works for any industry, any brand, any business type.
-    No hardcoded brand lists or industry-specific filtering.
+    Universal LLM-based brand detection with dynamic classification.
+    At runtime, classifies every detected brand into:
+    - government: official bodies, regulatory agencies, government databases
+    - dominant: large established commercial platforms (Google, Microsoft, etc.)
+    - competitor: same-scale commercial tools and services
+    Works for any industry without any hardcoding.
     """
     prompt = (
-        f"Read the AI response below and extract all brand or company names mentioned.\n\n"
+        f"Read the AI response below and extract all brands, tools, organizations, or services mentioned.\n\n"
+        f"For each brand found, classify it into one of three categories:\n"
+        f"- \"government\": government agencies, official regulatory bodies, national/international databases, "
+        f"standards organizations (e.g. USPTO, FDA, WHO, SEC, WIPO, EPO, IEEE, ISO, any .gov entity)\n"
+        f"- \"dominant\": large established commercial platforms or companies that dominate their industry "
+        f"(e.g. Google, Microsoft, Amazon, Apple, Salesforce, Adobe) - companies worth billions\n"
+        f"- \"competitor\": commercial tools, startups, SaaS products, agencies, or services at a similar "
+        f"scale to the target brand that could be a real alternative\n\n"
         f"Return ONLY a valid JSON object. No explanation. No markdown fences.\n\n"
         f"Format:\n"
         f"{{\n"
-        f"  \"all_brands\": [\"Brand1\", \"Brand2\"],\n"
+        f"  \"all_brands\": [\n"
+        f"    {{\"name\": \"Brand1\", \"category\": \"competitor\"}},\n"
+        f"    {{\"name\": \"USPTO\", \"category\": \"government\"}},\n"
+        f"    {{\"name\": \"Google\", \"category\": \"dominant\"}}\n"
+        f"  ],\n"
         f"  \"target_mentioned\": true,\n"
         f"  \"target_position\": 1,\n"
         f"  \"target_context\": \"recommended\"\n"
         f"}}\n\n"
         f"Rules:\n"
-        f"- all_brands: list of ALL brand/company/product names in order of appearance\n"
+        f"- all_brands: every brand/org mentioned in the response, with category assigned\n"
+        f"- Only include brands that appear as recommendations, suggestions, or comparisons\n"
         f"- target_mentioned: true ONLY if \"{target_brand}\" appears explicitly by name\n"
-        f"- target_position: position of \"{target_brand}\" (1=first, 2=second, 0=not mentioned)\n"
-        f"- target_context: one of recommended / mentioned / warned_against / not_mentioned\n"
-        f"- Do NOT filter any brands - include everything regardless of industry\n"
-        f"- Only set target_mentioned=true if the exact name \"{target_brand}\" appears in the text\n\n"
+        f"- target_position: position of \"{target_brand}\" (1=first, 0=not mentioned)\n"
+        f"- target_context: one of recommended / mentioned / warned_against / not_mentioned\n\n"
         f"Target brand to track: {target_brand}\n\n"
-        f"AI Response to analyze:\n"
+        f"AI Response:\n"
         f"\"\"\"{response_text[:2000]}\"\"\""
     )
 
     try:
         raw = _call_llm_for_detection(prompt)
         parsed = json.loads(raw)
+
+        # Normalize all_brands to always be a flat list of strings
+        # while preserving category info separately
+        raw_brands = parsed.get("all_brands", [])
+        normalized_brands = []
+        government_brands = []
+        dominant_brands = []
+        competitor_brands = []
+
+        for item in raw_brands:
+            if isinstance(item, dict):
+                name = item.get("name", "").strip()
+                category = item.get("category", "competitor")
+            else:
+                # Fallback if LLM returns plain strings
+                name = str(item).strip()
+                category = "competitor"
+
+            if not name:
+                continue
+
+            normalized_brands.append(name)
+            if category == "government":
+                government_brands.append(name)
+            elif category == "dominant":
+                dominant_brands.append(name)
+            else:
+                competitor_brands.append(name)
+
+        parsed["all_brands"] = normalized_brands
+        parsed["government_brands"] = government_brands
+        parsed["dominant_brands"] = dominant_brands
+        parsed["competitor_brands"] = competitor_brands
         return parsed
+
     except Exception:
         return {
             "all_brands": [],
+            "government_brands": [],
+            "dominant_brands": [],
+            "competitor_brands": [],
             "target_mentioned": False,
             "target_position": 0,
             "target_context": "not_mentioned"
@@ -217,6 +267,9 @@ def detect_brands(
 
     return {
         "all_brands": all_brands,
+        "competitor_brands": llm_result.get("competitor_brands", []),
+        "government_brands": llm_result.get("government_brands", []),
+        "dominant_brands": llm_result.get("dominant_brands", []),
         "target_mentioned": target_mentioned,
         "target_position": llm_result.get("target_position", 0),
         "target_context": llm_result.get("target_context", "not_mentioned"),

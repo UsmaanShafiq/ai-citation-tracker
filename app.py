@@ -269,20 +269,26 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         )
 
     prompt = (
-        "You are an AI search visibility expert helping track how often brands appear in AI-generated answers.\n"
-        "For the topic below, generate 5 realistic prompts that a real potential buyer would type into "
-        "ChatGPT, Perplexity, or Gemini when searching for a solution.\n\n"
+        "You are an AI search visibility expert helping track how often commercial tools and services "
+        "appear in AI-generated answers.\n"
+        "For the topic below, generate 5 prompts that a real BUYER would type into ChatGPT, Perplexity, "
+        "or Gemini when actively looking for a tool or service to use.\n\n"
         "Topic: " + topic + "\n\n"
-        "Brand context (use this to understand the industry and buyer correctly):\n"
+        "Brand context:\n"
         + context_block + "\n"
         "Business type: " + business_type + "\n\n"
-        "STRICT RULES - violating these makes the data useless:\n"
+        "STRICT RULES:\n"
         "- NEVER mention the brand name \"" + brand_name + "\" in any prompt\n"
         "- NEVER mention any specific brand or company name in any prompt\n"
-        "- Prompts must sound like a real buyer who does NOT know which brand they will choose yet\n"
-        "- Vary the style: 1 short keyword, 2 full questions, 1 comparison, 1 persona-based\n"
-        "- Prompts must be specific enough to realistically surface agency/service recommendations\n"
-        "- Do NOT generate prompts about software tools or platforms if this is a service business\n\n"
+        "- Prompts must have COMMERCIAL INTENT - the person wants to find, compare, or buy a tool/service\n"
+        "- Do NOT write informational prompts like \'what is X\' or \'how does X work\'\n"
+        "- Do NOT write prompts that lead to government bodies, official databases, or Wikipedia\n"
+        "- DO write prompts like: best X tool for Y, alternatives to expensive X, X software for Z use case\n"
+        "- Think: startup founder or professional who wants a specific tool recommendation right now\n"
+        "- Vary style: 1 short keyword, 2 comparison/alternative questions, 1 use-case specific, 1 persona-based\n\n"
+        "GOOD prompts: \'best AI patent search tool for startups\', \'affordable alternative to PatSnap\', "
+        "\'which tool finds prior art faster\', \'I am a solo inventor looking for patent search software\'\n"
+        "BAD prompts: \'what is prior art\', \'how does patent search work\', \'USPTO database guide\'\n\n"
         "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
     )
 
@@ -990,32 +996,53 @@ elif st.session_state.step == 4:
                                     )
                                     st.markdown(highlighted[:3000])
 
-            # ── Competitor ranking ────────────────────────────────────────
-            st.subheader("Competitor Brands Detected")
+            # ── Competitor ranking - 3 dynamic categories ───────────────
+            st.subheader("Brands Detected in AI Responses")
+            st.caption("Brands are automatically classified at runtime by AI — no hardcoding, works for any industry.")
 
             real_competitors = scores.get("real_competitors", [])
             dominant_platforms = scores.get("dominant_platforms", [])
+            government_bodies = scores.get("government_bodies", [])
             total_q = scores["total_queries_run"]
 
-            if real_competitors:
-                st.markdown("**Direct Competitors** (brands at a similar scale to yours)")
-                st.caption("These brands appeared in some but not all AI responses — likely your real competition.")
-                comp_df = pd.DataFrame(real_competitors[:15], columns=["Brand", "Mentions"])
-                comp_df["Appearance Rate"] = comp_df["Mentions"].apply(
-                    lambda x: f"{round((x / total_q) * 100)}%"
-                )
-                st.dataframe(comp_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("No direct competitors detected.")
+            tab1, tab2, tab3 = st.tabs([
+                f"Direct Competitors ({len(real_competitors)})",
+                f"Dominant Platforms ({len(dominant_platforms)})",
+                f"Government / Official Bodies ({len(government_bodies)})"
+            ])
 
-            if dominant_platforms:
-                st.markdown("**Dominant Platforms** (major players that appear in most AI responses)")
-                st.caption("These brands appear in over 80% of AI responses. They are large established platforms, not your direct competitors.")
-                dom_df = pd.DataFrame(
-                    [(b, c, f"{r}%") for b, c, r in dominant_platforms[:10]],
-                    columns=["Brand", "Mentions", "Appearance Rate"]
-                )
-                st.dataframe(dom_df, use_container_width=True, hide_index=True)
+            with tab1:
+                st.caption("Commercial tools and services at a similar scale to yours — your real competition.")
+                if real_competitors:
+                    comp_df = pd.DataFrame(real_competitors[:20], columns=["Brand", "Mentions"])
+                    comp_df["Appearance Rate"] = comp_df["Mentions"].apply(
+                        lambda x: f"{round((x / total_q) * 100)}%"
+                    )
+                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No direct competitors detected. Try adding known competitors in Step 1 for better tracking.")
+
+            with tab2:
+                st.caption("Large established commercial platforms. These dominate AI responses but are not your direct competition.")
+                if dominant_platforms:
+                    dom_df = pd.DataFrame(
+                        [(b, c, f"{r}%") for b, c, r in dominant_platforms[:15]],
+                        columns=["Brand", "Mentions", "Appearance Rate"]
+                    )
+                    st.dataframe(dom_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No dominant platforms detected.")
+
+            with tab3:
+                st.caption("Government agencies, regulatory bodies, and official databases. These appear as authoritative references, not competitors.")
+                if government_bodies:
+                    gov_df = pd.DataFrame(
+                        [(b, c, f"{r}%") for b, c, r in government_bodies[:15]],
+                        columns=["Organization", "Mentions", "Appearance Rate"]
+                    )
+                    st.dataframe(gov_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No government or official bodies detected.")
 
             # ── Brand mention context ────────────────────────────────────
             st.subheader("How Your Brand Was Mentioned")

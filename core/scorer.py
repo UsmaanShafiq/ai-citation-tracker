@@ -53,41 +53,59 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
             "share_pct": round((cat_mentions / len(cat_results)) * 100)
         }
 
-    # ─── Competitor brand frequency ───────────────────────────────────────────
-    # No hardcoded exclusion list - works for any industry.
-    # We split competitors into two tiers:
-    # - Dominant platforms: appear in >80% of all prompts (Google, USPTO, etc.)
-    # - Real competitors: appear in <=80% of prompts (same-scale brands)
-    # This prevents small brands from being compared to trillion-dollar companies.
+    # ─── Competitor brand frequency - dynamic 3-category classification ─────────
+    # Categories are assigned at runtime by the LLM based on what each brand is.
+    # No hardcoding - works for any industry automatically.
+    # government: USPTO, FDA, WHO, SEC etc (any official body)
+    # dominant: Google, Microsoft, Amazon etc (billion-dollar platforms)
+    # competitor: same-scale commercial tools and services
 
     total_queries = len(results)
-    dominant_threshold = 0.8  # brands appearing in >80% of prompts are dominant platforms
 
+    government_counts = defaultdict(int)
+    dominant_counts = defaultdict(int)
     competitor_counts = defaultdict(int)
+
     for r in results:
-        for brand in r["brands_detected"]["all_brands"]:
-            brand_clean = brand.strip()
-            if brand_clean.lower() == target_brand.lower():
-                continue
-            competitor_counts[brand_clean] += 1
+        bd = r["brands_detected"]
+        target_lower = target_brand.lower()
 
-    # Separate into dominant platforms vs real competitors
-    dominant_platforms = []
-    real_competitors = []
+        for brand in bd.get("government_brands", []):
+            if brand.strip().lower() != target_lower:
+                government_counts[brand.strip()] += 1
 
-    for brand, count in sorted(competitor_counts.items(), key=lambda x: x[1], reverse=True):
-        appearance_rate = count / total_queries if total_queries > 0 else 0
-        if appearance_rate > dominant_threshold:
-            dominant_platforms.append((brand, count, round(appearance_rate * 100)))
-        else:
-            real_competitors.append((brand, count))
+        for brand in bd.get("dominant_brands", []):
+            if brand.strip().lower() != target_lower:
+                dominant_counts[brand.strip()] += 1
 
-    # Sort both lists by frequency
-    dominant_platforms = sorted(dominant_platforms, key=lambda x: x[1], reverse=True)
-    real_competitors = sorted(real_competitors, key=lambda x: x[1], reverse=True)
+        for brand in bd.get("competitor_brands", []):
+            if brand.strip().lower() != target_lower:
+                competitor_counts[brand.strip()] += 1
 
-    # Keep competitor_ranking as combined list for backward compatibility
-    competitor_ranking = [(b, c) for b, c in real_competitors] + [(b, c) for b, c, _ in dominant_platforms]
+        # Fallback: if categories not present (old data), use all_brands
+        if not any([bd.get("government_brands"), bd.get("dominant_brands"), bd.get("competitor_brands")]):
+            for brand in bd.get("all_brands", []):
+                brand_clean = brand.strip()
+                if brand_clean.lower() != target_lower:
+                    competitor_counts[brand_clean] += 1
+
+    # Sort each category by frequency
+    real_competitors = sorted(competitor_counts.items(), key=lambda x: x[1], reverse=True)
+    dominant_platforms = sorted(
+        [(b, c, round((c/total_queries)*100)) for b, c in dominant_counts.items()],
+        key=lambda x: x[1], reverse=True
+    )
+    government_bodies = sorted(
+        [(b, c, round((c/total_queries)*100)) for b, c in government_counts.items()],
+        key=lambda x: x[1], reverse=True
+    )
+
+    # Combined list for backward compatibility
+    competitor_ranking = (
+        [(b, c) for b, c in real_competitors] +
+        [(b, c) for b, c, _ in dominant_platforms] +
+        [(b, c) for b, c, _ in government_bodies]
+    )
 
     # ─── Position score ───────────────────────────────────────────────────────
     position_scores = []
@@ -135,6 +153,7 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
         "competitor_ranking": competitor_ranking,
         "real_competitors": real_competitors,
         "dominant_platforms": dominant_platforms,
+        "government_bodies": government_bodies,
         "context_breakdown": dict(context_counts)
     }
 
