@@ -307,31 +307,42 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     prompt = (
         "You track brand visibility in AI search tools like ChatGPT and Perplexity.\n\n"
-        "For the topic below, generate 5 natural questions a real BUYER would type "
+        "For the topic below, generate EXACTLY 5 prompts that a real BUYER would type "
         "when they want an AI to recommend a specific " + solution_word + ".\n\n"
         "Topic: " + topic + "\n\n"
         "Context:\n"
         + context_block
         + competitor_context + "\n"
         "Business type: " + business_type + "\n\n"
-        "RULES:\n"
+        "STRICT RULES:\n"
         "- NEVER mention \"" + brand_name + "\" in any prompt\n"
         "- Every prompt must make an AI name specific brands in its answer\n"
         "- Do NOT write how-to, strategy, or educational prompts\n"
         "- Do NOT write prompts that would be answered with generic advice\n"
+        "- Do NOT include any year numbers like 2023, 2024, 2025 - they go stale. Use natural language instead\n"
         + avoid_line +
         "- If competitors are listed above, use different ones across comparison prompts\n"
-        "- Vary the 5 prompts: 1 short keyword, 1 best-of question, 1 comparison, 1 alternative-seeking, 1 persona\n"
-        "- Persona prompt format: start with 'I am a [specific role from target audience]', "
-        "add context about their situation, end with a direct question asking for specific " + solution_word + " recommendations\n"
-        "- Persona example style: 'I am a [role] at a [company type], looking for a " + solution_word + " that does [need]. What do you recommend?'\n"
-        "- Pick the persona role from the target audience listed above\n"
-        + (f"- The short keyword prompt must include '{country}' to make it location-specific\n" if country and country.lower() != "global" else "") +
-        "\nRespond ONLY with a JSON array of 5 strings. No explanation, no markdown."
+        "\nThe 5 prompts MUST follow this exact structure, one of each type:\n"
+        "1. SHORT KEYWORD: 3-6 word search phrase\n"
+        "2. BEST-OF QUESTION: ask which is the best " + solution_word + " for a specific use case\n"
+        "3. COMPARISON: compare two specific competitors against each other\n"
+        "4. ALTERNATIVE: ask for alternatives to one specific competitor\n"
+        "5. PERSONA: start with 'I am a [role from target audience] at a [company type],' "
+        "describe their specific need, end with 'what " + solution_word + " do you recommend?'\n"
+        "   Example: 'I am a patent attorney at a tech startup, I need to run prior art searches quickly and affordably. What tool do you recommend?'\n"
+        + (f"- The short keyword prompt (prompt 1) must include '{country}'\n" if country and country.lower() != "global" else "") +
+        "\nRespond ONLY with a JSON array of exactly 5 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
     prompts = _parse_json_list(raw)
+
+    # Post-process: strip any year references dynamically
+    import re as _re
+    year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
+    prompts = [year_pattern.sub("", p).strip() for p in prompts]
+    # Clean up any double spaces left after year removal
+    prompts = [" ".join(p.split()) for p in prompts]
 
     brand_lower = brand_name.lower()
     clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
