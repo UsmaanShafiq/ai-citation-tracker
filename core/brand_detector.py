@@ -254,16 +254,30 @@ def detect_brands(
         custom_lower = [t.lower() for t in custom_exclusions]
         all_brands = [b for b in all_brands if b.lower() not in custom_lower]
 
-    # Strict string match: only flag as mentioned if the FULL brand name
-    # appears as a whole word in the response text.
-    # We do NOT use partial matches like "ai" in "pqai" as that causes false positives.
+    # GROUND TRUTH check: the brand name must actually appear as a whole word
+    # in the response text. The regex is the final authority.
+    # We do NOT trust the LLM alone because it can hallucinate or confuse
+    # similar-sounding brand names (e.g. "Conductor" mistaken for "Concurate").
     import re as _re
     brand_pattern = _re.compile(
         r"\b" + _re.escape(target_brand) + r"\b",
         _re.IGNORECASE
     )
     target_in_string = bool(brand_pattern.search(response_text))
-    target_mentioned = llm_result.get("target_mentioned", False) or target_in_string
+
+    # Only mark as mentioned if the brand ACTUALLY appears in the text.
+    # The LLM result is used for context/position only when string match confirms presence.
+    target_mentioned = target_in_string
+
+    # Get context and position from LLM only when we confirmed the brand is present
+    target_context = "not_mentioned"
+    target_position = 0
+    if target_in_string:
+        target_context = llm_result.get("target_context", "mentioned")
+        target_position = llm_result.get("target_position", 0)
+        # If LLM says not_mentioned but string match found it, override context
+        if target_context == "not_mentioned":
+            target_context = "mentioned"
 
     return {
         "all_brands": all_brands,
@@ -271,8 +285,8 @@ def detect_brands(
         "government_brands": llm_result.get("government_brands", []),
         "dominant_brands": llm_result.get("dominant_brands", []),
         "target_mentioned": target_mentioned,
-        "target_position": llm_result.get("target_position", 0),
-        "target_context": llm_result.get("target_context", "not_mentioned"),
+        "target_position": target_position,
+        "target_context": target_context,
         "string_match_brands": string_matches,
         "llm_detected_brands": llm_result.get("all_brands", []),
         "business_type_detected": business_type
