@@ -254,16 +254,43 @@ def detect_brands(
         custom_lower = [t.lower() for t in custom_exclusions]
         all_brands = [b for b in all_brands if b.lower() not in custom_lower]
 
-    # GROUND TRUTH check: the brand name must actually appear as a whole word
-    # in the response text. The regex is the final authority.
-    # We do NOT trust the LLM alone because it can hallucinate or confuse
-    # similar-sounding brand names (e.g. "Conductor" mistaken for "Concurate").
+    # GROUND TRUTH check: the brand name must actually appear in the response text.
+    # The regex is the final authority - LLM cannot override this.
+    # We also generate smart variations to handle cases where the user typed
+    # the brand name differently from how it appears in AI responses.
+    # e.g. "siegemedia" typed without space matches "Siege Media" in responses.
     import re as _re
-    brand_pattern = _re.compile(
-        r"\b" + _re.escape(target_brand) + r"\b",
-        _re.IGNORECASE
-    )
-    target_in_string = bool(brand_pattern.search(response_text))
+
+    def build_brand_variants(name: str) -> list:
+        """Generate smart variations of a brand name for matching."""
+        variants = [name]
+
+        # If no spaces: try inserting a space before each capital or word boundary
+        # e.g. "siegemedia" -> "siege media", "SiegeMedia" -> "Siege Media"
+        if " " not in name:
+            # lowercase with space inserted at camelCase boundaries
+            spaced = _re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+            if spaced != name:
+                variants.append(spaced)
+            # try all lowercase with space at common split points
+            # e.g. "siegemedia" - try splitting at each position
+            lower = name.lower()
+            for i in range(2, len(lower) - 1):
+                variants.append(lower[:i] + " " + lower[i:])
+
+        # Also try removing spaces (in case user typed "Siege Media" but AI says "SiegeMedia")
+        if " " in name:
+            variants.append(name.replace(" ", ""))
+            variants.append(name.replace(" ", "").lower())
+
+        return list(dict.fromkeys(variants))  # deduplicate, preserve order
+
+    target_in_string = False
+    for variant in build_brand_variants(target_brand):
+        pattern = _re.compile(r"\b" + _re.escape(variant) + r"\b", _re.IGNORECASE)
+        if pattern.search(response_text):
+            target_in_string = True
+            break
 
     # Only mark as mentioned if the brand ACTUALLY appears in the text.
     # The LLM result is used for context/position only when string match confirms presence.
