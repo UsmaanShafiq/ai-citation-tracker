@@ -181,131 +181,123 @@ def fetch_brand_website(domain: str) -> str:
 
 
 def ai_generate_topics(brand_data: dict) -> list:
-    """
-    Generates 5 natural search topics the way traqer.ai does it.
-    Topics are short keyword phrases real people type into AI tools
-    when they want a recommendation in this niche.
-    No intent filters. No industry assumptions. Just natural search behavior.
-    """
+    business_type = brand_data.get("business_type", "")
     products = ", ".join(brand_data.get("products", []))
     customers = ", ".join(brand_data.get("customers", []))
     key_features = ", ".join(brand_data.get("key_features", []))
-    business_type = brand_data.get("business_type", "")
     domain = brand_data.get("domain", "")
-    brand_name = brand_data["name"]
 
-    # Visit website for real context
-    website_text = brand_data.get("_website_text", "")
-    if not website_text and domain:
+    # Visit the brand website for accurate context
+    website_text = ""
+    if domain:
         website_text = fetch_brand_website(domain)
 
-    context = ""
+    # Build context block - website content takes priority, form data as supplement
     if website_text:
-        context = "Website content:\n" + website_text[:2000] + "\n\n"
-    context += (
-        "Brand: " + brand_name + "\n"
-        "What they offer: " + products + "\n"
-        "Who they serve: " + customers + "\n"
-        "Key differentiators: " + key_features + "\n"
-        "Business type: " + business_type
-    )
-
-    country = brand_data.get("country", "")
-    country_note = ""
-    if country and country.lower() not in ["global", ""]:
-        country_note = f"User is based in: {country}\n"
+        context_block = (
+            "WEBSITE CONTENT (scraped directly from their homepage - use this as primary source of truth):\n"
+            + website_text[:2000]
+            + "\n\n"
+            "FORM DATA (entered by user - use to supplement website content):\n"
+            "What they do: " + products + "\n"
+            "Who they serve: " + customers + "\n"
+            "Key differentiators: " + key_features + "\n"
+        )
+    else:
+        # Fallback: no website content, use form data only
+        context_block = (
+            "BRAND PROFILE (entered by user):\n"
+            "What they do: " + products + "\n"
+            "Who they serve: " + customers + "\n"
+            "Key differentiators: " + key_features + "\n"
+        )
 
     prompt = (
-        "You are tracking brand visibility in AI search tools like ChatGPT, Perplexity, and Gemini.\n\n"
-        "Based on the brand information below, generate 5 short search topics that real people "
-        "type into AI tools when they are looking for something in this niche.\n\n"
-        + context + "\n"
-        + country_note + "\n"
-        "Generate topics that are:\n"
-        "- Natural keyword phrases (3-7 words) that real users actually type\n"
-        "- Specific enough to this niche that an AI would recommend brands in its answer\n"
-        "- Varied: mix of comparison topics, recommendation topics, and use-case topics\n"
-        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
-        + (f"- Where relevant, include the country '{country}' in 1-2 topics to reflect local search\n" if country and country.lower() not in ["global", "united states", ""] else "") +
-        "\nThink about what someone would type when they want an AI to recommend "
-        "something in this space. Not how-to questions. Not definitions. "
-        "Questions where the AI would name specific brands or services.\n\n"
-        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
+        "You are an AI search visibility expert helping track how often brands appear in AI-generated answers.\n"
+        "Your job is to generate realistic search topics that a potential BUYER would type into an AI tool "
+        "like ChatGPT, Perplexity, or Gemini when looking for a solution like this brand.\n\n"
+        "IMPORTANT RULES:\n"
+        "- Read ALL the brand information below carefully before generating anything\n"
+        "- Infer the correct meaning of ALL industry terms and abbreviations from the brand context\n"
+        "- Do NOT assume any fixed meaning for abbreviations - let the brand content guide you\n"
+        "- Topics must reflect what a real buyer searches for, NOT what the brand wants to be known for\n"
+        "- Do NOT include the brand name in any topic\n"
+        "- Do NOT generate topics about software tools if this is a service/agency business\n"
+        "- Business type: " + business_type + "\n"
+        "- Think like a buyer who does not know this brand yet but has a problem this brand solves\n\n"
+        "Brand: " + brand_data["name"] + "\n"
+        "Domain: " + domain + "\n"
+        "Country: " + brand_data.get("country", "United States") + "\n\n"
+        + context_block +
+        "\nBased on ALL the information above, generate exactly 5 short keyword-style search topics (3-8 words each).\n"
+        "Each topic must represent a genuine search intent a potential customer would have.\n"
+        "NEVER include the brand name in any topic.\n\n"
+        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
     )
 
     raw = _call_ai_for_json(prompt)
     topics = _parse_json_list(raw)
-    brand_lower = brand_name.lower()
+    # Filter out any topic that accidentally contains the brand name
+    brand_lower = brand_data["name"].lower()
     topics = [t.strip() for t in topics if t.strip() and brand_lower not in t.lower()]
     return topics[:5]
 
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
-    """
-    Generates 5 natural question variations for a topic.
-    Exactly like traqer.ai - real questions people type into ChatGPT/Perplexity.
-    Varied styles: direct search, comparison, persona-based, conversational.
-    No hardcoded examples. No industry assumptions. Works for any niche globally.
-    Country is appended to prompts so results are location-aware and verifiable.
-    """
     brand_name = brand_data["name"]
+    products = ", ".join(brand_data.get("products", []))
+    customers = ", ".join(brand_data.get("customers", []))
     business_type = brand_data.get("business_type", "")
-    competitors = brand_data.get("competitors", [])
+    domain = brand_data.get("domain", "")
+
+    # Reuse cached website text if already fetched, else fetch again
     website_text = brand_data.get("_website_text", "")
-    country = brand_data.get("country", "")
+    if not website_text and domain:
+        website_text = fetch_brand_website(domain)
 
-    # Determine what to call the solution based on business type
-    # This makes persona prompts end with a recommendation request, not advice
-    is_service = any(w in business_type.lower() for w in ["service", "agency", "studio", "consultancy"])
-    solution_word = "agency or service provider" if is_service else "tool, software, or platform"
-
-    # Country context for location-aware prompts
-    country_line = ""
-    location_suffix = ""
-    if country and country.lower() not in ["global", "united states", ""]:
-        country_line = f"User country: {country}\n"
-        location_suffix = f" in {country}"
-    elif country and country.lower() == "united states":
-        country_line = f"User country: {country}\n"
-        location_suffix = ""  # US is default, no need to append
-
-    # Competitor context - only if user entered them
-    comp_line = ""
-    if competitors:
-        comp_line = (
-            "Known competitors in this space: " + ", ".join(competitors[:5]) + "\n"
-            "Include 1 prompt that compares or asks for alternatives to one of these competitors.\n"
+    # Build context block
+    if website_text:
+        context_block = (
+            "Website content (primary source of truth for what this brand does):\n"
+            + website_text[:1500]
+            + "\n\nForm data: " + products + " | Customers: " + customers
+        )
+    else:
+        context_block = (
+            "What they offer: " + products + "\n"
+            "Who buys from them: " + customers
         )
 
-    # Brief niche context so AI understands the space
-    niche_context = (
-        "Niche/industry: " + ", ".join(brand_data.get("products", [])) + "\n"
-        "Target audience: " + ", ".join(brand_data.get("customers", [])) + "\n"
-        "Business type: " + business_type + "\n"
-        + country_line
-    )
-    if website_text:
-        niche_context = "Website context:\n" + website_text[:800] + "\n\n" + niche_context
+    # Build competitor context if user entered competitors
+    competitors = brand_data.get("competitors", [])
+    competitor_context = ""
+    if competitors:
+        competitor_context = (
+            "\nKnown competitors in this space: " + ", ".join(competitors[:5]) +
+            "\nInclude 1-2 prompts asking for alternatives to or comparisons with these specific competitors."
+        )
 
     prompt = (
-        "You are tracking brand visibility in AI search tools like ChatGPT, Perplexity, and Gemini.\n\n"
-        "For the topic below, generate 5 natural questions or search phrases that real people "
-        "type into an AI tool when they want a recommendation in this niche.\n\n"
+        "You are an AI search visibility expert helping track how often commercial tools "
+        "appear in AI-generated answers.\n"
+        "For the topic below, generate 5 prompts that a real BUYER would type into ChatGPT or Perplexity "
+        "when actively looking for a tool or service to use.\n\n"
         "Topic: " + topic + "\n\n"
-        + niche_context + "\n"
-        + comp_line +
-        "\nRules:\n"
-        "- Questions must be natural - exactly what a real person would type\n"
-        "- Each question should be different in style and angle:\n"
-        "  1. Short keyword phrase (direct search" + (f", include the country '{country}' if relevant" if country and country != "Global" else "") + ")\n"
-        "  2. Conversational question asking for the best option - must end with a request to name specific " + solution_word + "s\n"
-        "  3. Comparison or alternative question between specific competitors\n"
-        "  4. Persona-based question (I am a [role] looking for a " + solution_word + ", please recommend specific ones)\n"
-        "  5. Specific use-case question that ends with asking for specific recommendations\n"
-        "- NEVER include the brand name '" + brand_name + "' in any question\n"
-        "- Every question must be specific enough that an AI would name actual brands in its answer\n"
-        "- Persona questions MUST end with asking for specific recommendations, not general advice\n\n"
-        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
+        "Brand context:\n"
+        + context_block
+        + competitor_context + "\n"
+        "Business type: " + business_type + "\n\n"
+        "STRICT RULES:\n"
+        "- NEVER mention \"" + brand_name + "\" in any prompt\n"
+        "- Prompts must have COMMERCIAL INTENT - finding, comparing, or buying a tool\n"
+        "- Do NOT write informational prompts like \'what is X\' or \'how does X work\'\n"
+        "- Do NOT write prompts about government bodies or official databases\n"
+        "- If competitors are provided above, use their names in 1-2 comparison prompts\n"
+        "- Vary style: 1 short keyword, 2 comparison/alternative, 1 use-case specific, 1 persona-based\n\n"
+        "GOOD: \'best AI patent search tool for startups\', \'affordable alternative to PatSnap\', "
+        "\'which tool finds prior art faster\', \'I am a solo inventor needing patent search software\'\n"
+        "BAD: \'what is prior art\', \'how does patent search work\', \'USPTO database guide\'\n\n"
+        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
     )
 
     raw = _call_ai_for_json(prompt)
@@ -313,15 +305,9 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     brand_lower = brand_name.lower()
     clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
-
-    # For non-US/non-Global countries, append country to the first topic prompt
-    # so the user can see the country is being used in actual queries
-    base_topic = topic
-    if location_suffix and not any(country.lower() in base_topic.lower() for _ in [1]):
-        base_topic = topic + location_suffix
-
-    result = [base_topic] + [p for p in clean if p.lower() != topic.lower()]
+    result = [topic] + [p for p in clean if p.lower() != topic.lower()]
     return result[:5]
+
 
 # Common English words falsely detected as brand names - filter these out
 BRAND_FALSE_POSITIVES = {
@@ -387,25 +373,39 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
         st.caption(help_text)
 
     if tags:
-        # Render each pill with an individual × remove button
-        pill_cols = st.columns(len(tags) if len(tags) <= 8 else 8)
+        # Show pills as inline HTML - clean and compact
+        pills_html = "".join([
+            f'<span style="display:inline-block;background:#1e3a5f;color:#7dd3fc;'
+            f'border:1px solid #2563eb;border-radius:999px;padding:4px 14px;'
+            f'margin:3px 4px;font-size:13px;font-weight:500;">{t}</span>'
+            for t in tags
+        ])
+        st.markdown(
+            f'<div style="padding:8px 0 4px 0;line-height:2.2;">{pills_html}</div>',
+            unsafe_allow_html=True
+        )
+
+        # Remove buttons in a clean compact row below pills
+        st.caption("Click × to remove a tag:")
+        remove_cols = st.columns(min(len(tags), 6))
         remove_idx = None
         for idx, tag in enumerate(tags):
-            col_idx = idx % 8
-            with pill_cols[col_idx]:
-                # Pill with × button inline
-                pill_html = (
-                    f'<span style="display:inline-flex;align-items:center;background:#1e3a5f;'
-                    f'color:#7dd3fc;border:1px solid #2563eb;border-radius:999px;'
-                    f'padding:3px 10px;margin:2px 2px 4px 0;font-size:13px;">{tag}</span>'
-                )
-                st.markdown(pill_html, unsafe_allow_html=True)
-                if st.button("×", key=f"{session_key}_remove_{idx}_{tag[:10]}", help=f"Remove {tag}"):
+            col_idx = idx % 6
+            with remove_cols[col_idx]:
+                short = tag[:12] + "…" if len(tag) > 12 else tag
+                if st.button(
+                    f"× {short}",
+                    key=f"{session_key}_rm_{idx}",
+                    use_container_width=True,
+                    help=f"Remove: {tag}"
+                ):
                     remove_idx = idx
         if remove_idx is not None:
             st.session_state[session_key].pop(remove_idx)
             st.rerun()
+        st.write("")
 
+    # Input row
     col_in, col_add, col_clear = st.columns([5, 1, 1])
     with col_in:
         new_val = st.text_input(
@@ -579,7 +579,7 @@ with st.sidebar:
     if st.button("🔄 Start Over", use_container_width=True):
         for key in ["step", "brand_data", "topics", "selected_topics",
                     "prompts_by_topic", "selected_prompts", "all_results", "run_complete",
-                    "step1_products", "step1_customers", "step1_key_features", "step1_competitors"]:
+                    "step1_products", "step1_customers", "step1_key_features"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
@@ -625,8 +625,6 @@ if st.session_state.step == 1:
         st.session_state["step1_customers"] = list(_saved["customers"])
     if "step1_key_features" not in st.session_state and _saved.get("key_features"):
         st.session_state["step1_key_features"] = list(_saved["key_features"])
-    if "step1_competitors" not in st.session_state and _saved.get("competitors"):
-        st.session_state["step1_competitors"] = list(_saved["competitors"])
 
     products_list = tag_input(
         "Your Products and Services",
@@ -658,18 +656,21 @@ if st.session_state.step == 1:
         help="Controls how competitors are detected"
     )
 
-    _country_options = ["United States", "United Kingdom", "Canada", "Australia",
-                         "Germany", "India", "Pakistan", "Global"]
-    _country_default = _saved.get("country", "United States")
-    _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
-    country = st.selectbox("Country", options=_country_options, index=_country_idx)
-
-    competitors_list_input = tag_input(
-        "Your Direct Competitors (recommended)",
-        session_key="step1_competitors",
-        placeholder="Type a competitor name and click Add",
-        help_text="Add brands at a similar scale to yours. These will be tracked separately from dominant platforms like Google."
-    )
+    col3, col4 = st.columns(2)
+    with col3:
+        _country_options = ["United States", "United Kingdom", "Canada", "Australia",
+                             "Germany", "India", "Pakistan", "Global"]
+        _country_default = _saved.get("country", "United States")
+        _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
+        country = st.selectbox("Country", options=_country_options, index=_country_idx)
+    with col4:
+        _saved_comps = ", ".join(_saved.get("competitors", []))
+        competitors_input = st.text_input(
+            "Your Direct Competitors (recommended)",
+            value=_saved_comps,
+            placeholder="e.g. PatSnap, Ambercite, The Lens",
+            help="Add brands at a similar scale to yours. These will be tracked separately from large dominant platforms like Google."
+        )
 
     st.divider()
 
@@ -685,7 +686,7 @@ if st.session_state.step == 1:
                 "key_features": key_features_list,
                 "business_type": business_type,
                 "country": country,
-                "competitors": competitors_list_input,
+                "competitors": [c.strip() for c in competitors_input.split(",") if c.strip()],
             }
             st.session_state.step = 2
             st.rerun()
@@ -793,27 +794,25 @@ elif st.session_state.step == 3:
                     st.session_state.selected_prompts[topic] = [topic]
 
     # Display prompts per topic in accordion style
-    for t_idx, topic in enumerate(st.session_state.selected_topics):
+    for topic in st.session_state.selected_topics:
         prompts = st.session_state.prompts_by_topic.get(topic, [])
         selected = st.session_state.selected_prompts.get(topic, [])
 
         with st.expander(f"**{topic}** ({len(selected)} prompts selected)", expanded=True):
-            for p_idx, prompt in enumerate(prompts):
+            for prompt in prompts:
                 checked = prompt in selected
-                # Use topic index + prompt index to guarantee unique keys
-                cb_key = f"prompt_t{t_idx}_p{p_idx}"
-                new_checked = st.checkbox(prompt, value=checked, key=cb_key)
+                new_checked = st.checkbox(prompt, value=checked, key=f"prompt_{topic}_{prompt[:40]}")
                 if new_checked and prompt not in st.session_state.selected_prompts.get(topic, []):
                     st.session_state.selected_prompts.setdefault(topic, []).append(prompt)
                 elif not new_checked and prompt in st.session_state.selected_prompts.get(topic, []):
                     st.session_state.selected_prompts[topic].remove(prompt)
 
             # Add custom prompt
-            custom_key = f"custom_prompt_t{t_idx}"
+            custom_key = f"custom_prompt_{topic[:20]}"
             custom_prompt = st.text_input("+ Add prompt", key=custom_key,
                                           placeholder="Type a custom prompt and press Enter")
             if custom_prompt.strip() and custom_prompt.strip() not in prompts:
-                if st.button("Add", key=f"add_prompt_btn_t{t_idx}"):
+                if st.button("Add", key=f"add_prompt_btn_{topic[:20]}"):
                     st.session_state.prompts_by_topic[topic].append(custom_prompt.strip())
                     st.session_state.selected_prompts.setdefault(topic, []).append(custom_prompt.strip())
                     st.rerun()
@@ -929,15 +928,7 @@ elif st.session_state.step == 4:
     else:
         all_results = st.session_state.all_results
         st.subheader(f"Results: {brand_name}")
-        _country = bd.get('country', 'United States')
-        _btype = bd.get('business_type', '')
-        st.caption(f"Domain: {brand_domain} | Business Type: {_btype}")
-        if _country and _country != "Global":
-            st.info(
-                f"🌍 **Country context: {_country}** — Location is included in prompts where relevant. "
-                f"Check the Prompt column in results to confirm. "
-                f"Perplexity gives the most location-accurate results as it searches the live web."
-            )
+        st.caption(f"Domain: {brand_domain} | Country: {bd.get('country', 'US')} | Business Type: {bd.get('business_type', '')}")
 
         if not all_results:
             st.error("No results returned. Check your API keys and try again.")
@@ -952,52 +943,7 @@ elif st.session_state.step == 4:
             c3.metric("Position Score", f"{scores['position_score_pct']}%")
             c4.metric("Topics Tracked", len(st.session_state.selected_topics))
 
-            # ── Charts ────────────────────────────────────────────────────
-            st.subheader("Visibility Overview")
-            chart_col1, chart_col2 = st.columns(2)
-
-            with chart_col1:
-                # Bar chart: visibility % per AI model
-                tool_chart_data = {
-                    tool: data["share_pct"]
-                    for tool, data in scores["citation_share_by_tool"].items()
-                }
-                if tool_chart_data:
-                    chart_df = pd.DataFrame({
-                        "AI Model": list(tool_chart_data.keys()),
-                        "Visibility %": list(tool_chart_data.values())
-                    })
-                    st.markdown("**Visibility % by AI Model**")
-                    st.bar_chart(chart_df.set_index("AI Model"), use_container_width=True, color="#2563eb")
-
-            with chart_col2:
-                # Horizontal bar chart: visibility % per topic
-                topic_scores = calculate_citation_share_by_topic(all_results, brand_name)
-                if topic_scores:
-                    topic_df = pd.DataFrame({
-                        "Topic": [t[:35] + "..." if len(t) > 35 else t for t in topic_scores.keys()],
-                        "Visibility %": [v["share_pct"] for v in topic_scores.values()]
-                    })
-                    st.markdown("**Visibility % by Topic**")
-                    st.bar_chart(topic_df.set_index("Topic"), use_container_width=True, color="#16a34a")
-
-            # Context breakdown donut-style using metrics
-            ctx = scores["context_breakdown"]
-            total_ctx = sum(ctx.values()) or 1
-            st.markdown("**How Your Brand Was Mentioned**")
-            ctx_cols = st.columns(4)
-            ctx_labels = {
-                "recommended": ("🟢 Recommended", "#16a34a"),
-                "mentioned": ("🔵 Mentioned", "#2563eb"),
-                "warned_against": ("🔴 Warned Against", "#dc2626"),
-                "not_mentioned": ("⚪ Not Mentioned", "#6b7280"),
-            }
-            for i, (key, (label, _)) in enumerate(ctx_labels.items()):
-                count = ctx.get(key, 0)
-                pct = round((count / total_ctx) * 100)
-                ctx_cols[i].metric(label, f"{count}", f"{pct}% of responses")
-
-            # ── Visibility per model table ────────────────────────────────
+            # ── Visibility per model ──────────────────────────────────────
             st.subheader("Visibility % by AI Model")
             tool_rows = []
             for tool, data in scores["citation_share_by_tool"].items():
@@ -1145,7 +1091,14 @@ elif st.session_state.step == 4:
                 else:
                     st.info("No government or official bodies detected.")
 
-
+            # ── Brand mention context ────────────────────────────────────
+            st.subheader("How Your Brand Was Mentioned")
+            ctx = scores["context_breakdown"]
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Recommended", ctx.get("recommended", 0))
+            c2.metric("Mentioned", ctx.get("mentioned", 0))
+            c3.metric("Warned Against", ctx.get("warned_against", 0))
+            c4.metric("Not Mentioned", ctx.get("not_mentioned", 0))
 
             # ── Full results table ────────────────────────────────────────
             st.subheader("Full Results Table")
