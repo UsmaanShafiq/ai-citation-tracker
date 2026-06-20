@@ -322,14 +322,13 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "- Do NOT include any year numbers like 2023, 2024, 2025 - they go stale. Use natural language instead\n"
         + avoid_line +
         "- If competitors are listed above, use different ones across comparison prompts\n"
-        "\nGenerate EXACTLY 4 prompts following this structure:\n"
-        "1. LOCATION KEYWORD: short 3-6 word phrase" + (f" that includes '{country}'" if country and country.lower() != "global" else "") + "\n"
-        "2. BEST-OF QUESTION: ask which is the best " + solution_word + " for a specific use case\n"
-        "3. COMPARISON: compare two specific competitors against each other\n"
-        "4. PERSONA: start with 'I am a [specific role from the target audience] at a [company type],' "
-        "describe their specific need in one sentence, end with 'what " + solution_word + " do you recommend?'\n"
-        "   Good persona example: 'I am a patent attorney at a tech startup, I need to run prior art searches quickly and affordably. What tool do you recommend?'\n"
-        "   Bad persona example: 'What are the best tools available?'\n"
+        "\nGenerate EXACTLY 4 separate standalone prompts. Each must be its own complete question or search phrase.\n"
+        "Return them as a JSON array of 4 independent strings.\n\n"
+        "Prompt 1 - SHORT SEARCH PHRASE: 3-6 words only" + (f", must include '{country}'" if country and country.lower() != "global" else "") + ". No question mark. Example: 'best patent search software United States'\n"
+        "Prompt 2 - BEST-OF QUESTION: one clear question asking which " + solution_word + " is best for a use case. Example: 'Which is the best AI patent search tool for finding prior art?'\n"
+        "Prompt 3 - COMPARISON: one clear question comparing two competitors. Example: 'How does TriangleIP compare to AcclaimIP for patent searches?'\n"
+        "Prompt 4 - PERSONA: exactly this format: 'I am a [role] at a [company type]. I need [specific need]. What " + solution_word + " do you recommend?' Keep it to 2-3 short sentences max.\n"
+        "\nIMPORTANT: Each of the 4 prompts must be a single standalone string. Do NOT combine multiple prompts into one string.\n"
         "\nRespond ONLY with a JSON array of exactly 4 strings. No explanation, no markdown."
     )
 
