@@ -267,11 +267,19 @@ def ai_generate_topics(brand_data: dict) -> list:
     # Filter out topics that are too vague or likely to produce wrong results
     # These are patterns that make ChatGPT give generic advice instead of brand names
     # Works for any industry - just checking for structural/intent issues
+    # Words that cause ChatGPT to return wrong category of brands
+    # "providers/solutions/platforms" alone → returns SaaS tools not agencies
+    # "thought leadership" alone → returns Gartner/McKinsey not content agencies
+    # "consultants/consultancies" → returns big consulting firms
+    # These are intent signals that make ChatGPT misinterpret the category
     bad_patterns = [
         "strategies", "tips", "how to", "examples", "guide", "tutorial",
         "best practices", "introduction", "overview", "explained", "meaning",
-        "definition", "what is", "benefits of", "advantages of"
+        "definition", "what is", "benefits of", "advantages of",
     ]
+    # Standalone vague nouns that only work when combined with agency/firm/service
+    vague_standalone = ["providers", "solutions", "platforms", "consultants", "consultancies"]
+
     filtered = []
     for t in topics:
         t = t.strip()
@@ -280,7 +288,13 @@ def ai_generate_topics(brand_data: dict) -> list:
         if brand_lower in t.lower():
             continue
         t_lower = t.lower()
+        # Skip if contains bad educational/informational patterns
         if any(bp in t_lower for bp in bad_patterns):
+            continue
+        # Skip vague standalone nouns unless paired with agency/firm/service/company
+        has_vague = any(v in t_lower for v in vague_standalone)
+        has_anchor = any(a in t_lower for a in ["agency", "agencies", "firm", "firms", "service", "services", "company", "companies"])
+        if has_vague and not has_anchor:
             continue
         filtered.append(t)
 
@@ -1072,6 +1086,35 @@ elif st.session_state.step == 4:
         status_text.text("Done.")
         st.session_state.all_results = all_results
         st.session_state.run_complete = True
+
+        # Play a notification sound when results are ready
+        # Uses Web Audio API via JavaScript - no external files needed
+        st.components.v1.html("""
+        <script>
+        (function() {
+            try {
+                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                function beep(freq, start, duration, vol) {
+                    var o = ctx.createOscillator();
+                    var g = ctx.createGain();
+                    o.connect(g);
+                    g.connect(ctx.destination);
+                    o.frequency.value = freq;
+                    o.type = 'sine';
+                    g.gain.setValueAtTime(0, ctx.currentTime + start);
+                    g.gain.linearRampToValueAtTime(vol, ctx.currentTime + start + 0.01);
+                    g.gain.linearRampToValueAtTime(0, ctx.currentTime + start + duration);
+                    o.start(ctx.currentTime + start);
+                    o.stop(ctx.currentTime + start + duration + 0.1);
+                }
+                // Two-tone pleasant notification
+                beep(600, 0,    0.15, 0.3);
+                beep(900, 0.18, 0.25, 0.3);
+            } catch(e) {}
+        })();
+        </script>
+        """, height=0)
+
         st.rerun()
 
     # ==========================================================================
@@ -1375,4 +1418,16 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    st.rerun()
+                    st.rerun(        "RULES:\\n"
+        "- Every topic must be something where an AI would respond by naming specific brands\\n"
+        "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\\n"
+        "- Do NOT generate how-to, strategy, tips, or educational topics\\n"
+        "- Do NOT include the brand name \'" + brand_name + "\' in any topic\\n"
+        "- Every topic MUST contain a clear category word like: agency, agencies, firm, firms, service, services, tool, software, platform, company, companies\\n"
+        "- This anchor word ensures AI returns brand recommendations not generic advice\\n"
+        "- BAD example: \'top SaaS content providers\' | GOOD: \'top SaaS content marketing agencies\'\\n"
+        "- BAD example: \'leading thought leadership consultants\' | GOOD: \'top thought leadership content agencies\'\\n"
+        "- Vary the topics: mix of direct search, comparison, and use-case topics\\n"
+        + (f"- Include \'{country}\' in 1 topic\\n" if country and country.lower() not in ["global", "united states", ""] else "") +
+        "\\nGenerate exactly 5 short topics (3-8 words each).\\n"
+        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown.")
