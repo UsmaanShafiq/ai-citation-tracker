@@ -238,7 +238,7 @@ def ai_generate_topics(brand_data: dict) -> list:
         "- Do NOT generate how-to, strategy, tips, or educational topics\n"
         "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
         "- Vary the topics: mix of direct search, comparison, and use-case topics\n"
-        + (f"- Where relevant, include '{country}' in 1 topic\n" if country and country.lower() not in ["global", "united states", ""] else "") +
+        + (f"- Include '{country}' in 1-2 topics where it makes the search more specific\n" if country and country.lower() != "global" else "") +
         "\nGenerate exactly 5 short topics (3-8 words each).\n"
         "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
@@ -284,6 +284,9 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             "\nInclude 1-2 prompts asking for alternatives to or comparisons with these specific competitors."
         )
 
+    # Get country for location-aware prompts
+    country = brand_data.get("country", "")
+
     # Derive solution word dynamically from business type - works for any industry
     bt_lower = business_type.lower()
     if any(w in bt_lower for w in ["agency", "service", "studio", "consultancy"]):
@@ -319,8 +322,9 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + avoid_line +
         "- If competitors are listed above, use different ones across comparison prompts\n"
         "- Vary the 5 prompts: 1 short keyword, 1 best-of question, 1 comparison, 1 alternative-seeking, 1 persona\n"
-        "- Persona prompt must end with asking for specific " + solution_word + " recommendations\n\n"
-        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
+        "- Persona prompt must end with asking for specific " + solution_word + " recommendations\n"
+        + (f"- The short keyword prompt must include '{country}' to make it location-specific\n" if country and country.lower() != "global" else "") +
+        "\nRespond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
@@ -1207,9 +1211,42 @@ elif st.session_state.step == 4:
                 mime="text/csv"
             )
 
-            # ── Re-run button ─────────────────────────────────────────────
+            # ── Re-run options ────────────────────────────────────────────
             st.divider()
-            if st.button("🔄 Run Again with Same Settings", type="primary"):
-                st.session_state.run_complete = False
-                st.session_state.all_results = []
-                st.rerun()
+            st.subheader("Run Again")
+
+            rerun_col1, rerun_col2 = st.columns([1, 1])
+
+            with rerun_col1:
+                if st.button("🔄 Run Again with Same Settings", type="primary", use_container_width=True):
+                    st.session_state.run_complete = False
+                    st.session_state.all_results = []
+                    st.rerun()
+
+            with rerun_col2:
+                # Country switcher - keeps all topics and prompts, just changes country
+                st.markdown("**🌍 Re-run with a different country**")
+                _country_options = ["United States", "United Kingdom", "Canada", "Australia",
+                                    "Germany", "India", "Pakistan", "Global"]
+                _current_country = bd.get("country", "United States")
+                _current_idx = _country_options.index(_current_country) if _current_country in _country_options else 0
+                new_country = st.selectbox(
+                    "Select country",
+                    options=_country_options,
+                    index=_current_idx,
+                    key="rerun_country_select",
+                    label_visibility="collapsed"
+                )
+                if st.button("🚀 Re-run with this country", use_container_width=True):
+                    # Update country in brand_data and clear cached website text
+                    # so topics/prompts regenerate with new country context
+                    st.session_state.brand_data["country"] = new_country
+                    # Clear cached prompts so they regenerate with new country
+                    st.session_state.prompts_by_topic = {}
+                    st.session_state.selected_prompts = {}
+                    st.session_state.topics = []
+                    st.session_state.selected_topics = []
+                    st.session_state.run_complete = False
+                    st.session_state.all_results = []
+                    st.session_state.step = 2
+                    st.rerun()
