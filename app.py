@@ -181,64 +181,71 @@ def fetch_brand_website(domain: str) -> str:
 
 
 def ai_generate_topics(brand_data: dict) -> list:
+    """
+    Generates 5 search topics that would cause an AI to name specific brands.
+    Dynamically adapts to any business type - no hardcoding.
+    """
     business_type = brand_data.get("business_type", "")
     products = ", ".join(brand_data.get("products", []))
     customers = ", ".join(brand_data.get("customers", []))
     key_features = ", ".join(brand_data.get("key_features", []))
     domain = brand_data.get("domain", "")
+    brand_name = brand_data["name"]
+    country = brand_data.get("country", "")
 
-    # Visit the brand website for accurate context
-    website_text = ""
-    if domain:
+    # Derive what kind of solution this brand is - purely from business_type field
+    # No hardcoding - just reading what the user told us
+    bt_lower = business_type.lower()
+    if any(w in bt_lower for w in ["agency", "service", "studio", "consultancy"]):
+        solution_type = "agency, service provider, or consultancy"
+    elif any(w in bt_lower for w in ["saas", "software"]):
+        solution_type = "software, tool, or platform"
+    elif any(w in bt_lower for w in ["ecommerce", "dtc", "brand"]):
+        solution_type = "platform, store, or marketplace"
+    elif any(w in bt_lower for w in ["marketplace", "aggregator"]):
+        solution_type = "marketplace or platform"
+    else:
+        solution_type = "product or service"
+
+    # Country context
+    country_note = f"User location: {country}\n" if country and country.lower() != "global" else ""
+
+    # Website content
+    website_text = brand_data.get("_website_text", "")
+    if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    # Build context block - website content takes priority, form data as supplement
+    context = ""
     if website_text:
-        context_block = (
-            "WEBSITE CONTENT (scraped directly from their homepage - use this as primary source of truth):\n"
-            + website_text[:2000]
-            + "\n\n"
-            "FORM DATA (entered by user - use to supplement website content):\n"
-            "What they do: " + products + "\n"
-            "Who they serve: " + customers + "\n"
-            "Key differentiators: " + key_features + "\n"
-        )
-    else:
-        # Fallback: no website content, use form data only
-        context_block = (
-            "BRAND PROFILE (entered by user):\n"
-            "What they do: " + products + "\n"
-            "Who they serve: " + customers + "\n"
-            "Key differentiators: " + key_features + "\n"
-        )
+        context = "Website content (use as primary context):\n" + website_text[:2000] + "\n\n"
+    context += (
+        "Brand: " + brand_name + "\n"
+        "Business type: " + business_type + "\n"
+        "What they offer: " + products + "\n"
+        "Who they serve: " + customers + "\n"
+        "Key differentiators: " + key_features + "\n"
+        + country_note
+    )
 
     prompt = (
-        "You are an AI search visibility expert helping track how often brands appear in AI-generated answers.\n"
-        "Your job is to generate realistic search topics that a potential BUYER would type into an AI tool "
-        "like ChatGPT, Perplexity, or Gemini when looking for a solution like this brand.\n\n"
-        "IMPORTANT RULES:\n"
-        "- Read ALL the brand information below carefully before generating anything\n"
-        "- Infer the correct meaning of ALL industry terms and abbreviations from the brand context\n"
-        "- Do NOT assume any fixed meaning for abbreviations - let the brand content guide you\n"
-        "- Topics must reflect what a real buyer searches for, NOT what the brand wants to be known for\n"
-        "- Do NOT include the brand name in any topic\n"
-        "- Do NOT generate topics about software tools if this is a service/agency business\n"
-        "- Business type: " + business_type + "\n"
-        "- Think like a buyer who does not know this brand yet but has a problem this brand solves\n\n"
-        "Brand: " + brand_data["name"] + "\n"
-        "Domain: " + domain + "\n"
-        "Country: " + brand_data.get("country", "United States") + "\n\n"
-        + context_block +
-        "\nBased on ALL the information above, generate exactly 5 short keyword-style search topics (3-8 words each).\n"
-        "Each topic must represent a genuine search intent a potential customer would have.\n"
-        "NEVER include the brand name in any topic.\n\n"
-        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
+        "You track brand visibility in AI search tools like ChatGPT and Perplexity.\n\n"
+        "Based on the brand below, generate 5 search topics that a potential BUYER "
+        "would type when they want an AI to recommend a specific " + solution_type + ".\n\n"
+        + context + "\n"
+        "RULES:\n"
+        "- Every topic must be something where an AI would respond by naming specific brands\n"
+        "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\n"
+        "- Do NOT generate how-to, strategy, tips, or educational topics\n"
+        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
+        "- Vary the topics: mix of direct search, comparison, and use-case topics\n"
+        + (f"- Where relevant, include '{country}' in 1 topic\n" if country and country.lower() not in ["global", "united states", ""] else "") +
+        "\nGenerate exactly 5 short topics (3-8 words each).\n"
+        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
     topics = _parse_json_list(raw)
-    # Filter out any topic that accidentally contains the brand name
-    brand_lower = brand_data["name"].lower()
+    brand_lower = brand_name.lower()
     topics = [t.strip() for t in topics if t.strip() and brand_lower not in t.lower()]
     return topics[:5]
 
@@ -277,27 +284,43 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             "\nInclude 1-2 prompts asking for alternatives to or comparisons with these specific competitors."
         )
 
+    # Derive solution word dynamically from business type - works for any industry
+    bt_lower = business_type.lower()
+    if any(w in bt_lower for w in ["agency", "service", "studio", "consultancy"]):
+        solution_word = "agency or service provider"
+        avoid_line = "- NEVER use the word \'tool\' or \'software\' - this is a service not a tool\n"
+    elif any(w in bt_lower for w in ["saas", "software"]):
+        solution_word = "tool or software"
+        avoid_line = ""
+    elif any(w in bt_lower for w in ["ecommerce", "dtc"]):
+        solution_word = "platform or store"
+        avoid_line = ""
+    elif any(w in bt_lower for w in ["marketplace", "aggregator"]):
+        solution_word = "marketplace or platform"
+        avoid_line = ""
+    else:
+        solution_word = "product or service"
+        avoid_line = ""
+
     prompt = (
-        "You are an AI search visibility expert helping track how often commercial tools "
-        "appear in AI-generated answers.\n"
-        "For the topic below, generate 5 prompts that a real BUYER would type into ChatGPT or Perplexity "
-        "when actively looking for a tool or service to use.\n\n"
+        "You track brand visibility in AI search tools like ChatGPT and Perplexity.\n\n"
+        "For the topic below, generate 5 natural questions a real BUYER would type "
+        "when they want an AI to recommend a specific " + solution_word + ".\n\n"
         "Topic: " + topic + "\n\n"
-        "Brand context:\n"
+        "Context:\n"
         + context_block
         + competitor_context + "\n"
         "Business type: " + business_type + "\n\n"
-        "STRICT RULES:\n"
+        "RULES:\n"
         "- NEVER mention \"" + brand_name + "\" in any prompt\n"
-        "- Prompts must have COMMERCIAL INTENT - finding, comparing, or buying a tool\n"
-        "- Do NOT write informational prompts like \'what is X\' or \'how does X work\'\n"
-        "- Do NOT write prompts about government bodies or official databases\n"
-        "- If competitors are provided above, use their names in 1-2 comparison prompts\n"
-        "- Vary style: 1 short keyword, 2 comparison/alternative, 1 use-case specific, 1 persona-based\n\n"
-        "GOOD: \'best AI patent search tool for startups\', \'affordable alternative to PatSnap\', "
-        "\'which tool finds prior art faster\', \'I am a solo inventor needing patent search software\'\n"
-        "BAD: \'what is prior art\', \'how does patent search work\', \'USPTO database guide\'\n\n"
-        "Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown, no preamble."
+        "- Every prompt must make an AI name specific brands in its answer\n"
+        "- Do NOT write how-to, strategy, or educational prompts\n"
+        "- Do NOT write prompts that would be answered with generic advice\n"
+        + avoid_line +
+        "- If competitors are listed above, use different ones across comparison prompts\n"
+        "- Vary the 5 prompts: 1 short keyword, 1 best-of question, 1 comparison, 1 alternative-seeking, 1 persona\n"
+        "- Persona prompt must end with asking for specific " + solution_word + " recommendations\n\n"
+        "Respond ONLY with a JSON array of 5 strings. No explanation, no markdown."
     )
 
     raw = _call_ai_for_json(prompt)
@@ -943,7 +966,49 @@ elif st.session_state.step == 4:
             c3.metric("Position Score", f"{scores['position_score_pct']}%")
             c4.metric("Topics Tracked", len(st.session_state.selected_topics))
 
-            # ── Visibility per model ──────────────────────────────────────
+            # ── Charts ───────────────────────────────────────────────────
+            st.subheader("Visibility Overview")
+            chart_col1, chart_col2 = st.columns(2)
+
+            with chart_col1:
+                tool_chart_data = {
+                    tool: data["share_pct"]
+                    for tool, data in scores["citation_share_by_tool"].items()
+                }
+                if tool_chart_data:
+                    st.markdown("**Visibility % by AI Model**")
+                    chart_df = pd.DataFrame({
+                        "AI Model": list(tool_chart_data.keys()),
+                        "Visibility %": list(tool_chart_data.values())
+                    })
+                    st.bar_chart(chart_df.set_index("AI Model"), use_container_width=True, color="#2563eb")
+
+            with chart_col2:
+                topic_scores_chart = calculate_citation_share_by_topic(all_results, brand_name)
+                if topic_scores_chart:
+                    st.markdown("**Visibility % by Topic**")
+                    t_df = pd.DataFrame({
+                        "Topic": [t[:30] + "..." if len(t) > 30 else t for t in topic_scores_chart.keys()],
+                        "Visibility %": [v["share_pct"] for v in topic_scores_chart.values()]
+                    })
+                    st.bar_chart(t_df.set_index("Topic"), use_container_width=True, color="#16a34a")
+
+            # ── Context breakdown ────────────────────────────────────────
+            ctx = scores["context_breakdown"]
+            total_ctx = sum(ctx.values()) or 1
+            st.markdown("**How Your Brand Was Mentioned**")
+            ctx_cols = st.columns(4)
+            ctx_data = [
+                ("🟢 Recommended", ctx.get("recommended", 0)),
+                ("🔵 Mentioned", ctx.get("mentioned", 0)),
+                ("🔴 Warned Against", ctx.get("warned_against", 0)),
+                ("⚪ Not Mentioned", ctx.get("not_mentioned", 0)),
+            ]
+            for col, (label, count) in zip(ctx_cols, ctx_data):
+                pct = round((count / total_ctx) * 100)
+                col.metric(label, count, f"{pct}%")
+
+            # ── Visibility per model table ────────────────────────────────
             st.subheader("Visibility % by AI Model")
             tool_rows = []
             for tool, data in scores["citation_share_by_tool"].items():
