@@ -19,67 +19,14 @@ SERVICE_SIGNALS = [
     "retainer", "we write", "our team writes"
 ]
 
-# =============================================================================
-# KNOWN SERVICE BRANDS (agencies, studios, consultancies)
-# =============================================================================
-
-KNOWN_SERVICE_BRANDS = [
-    "Animalz", "Grow and Convert", "Foundation", "Siege Media",
-    "Codeless", "Optimist", "Beam Content", "Omniscient Digital",
-    "Fenwick", "Pepper Content", "Verblio", "Contently",
-    "Skyword", "NewsCred", "ClearVoice", "Brafton",
-    "Column Five", "TopRank Marketing", "Knotch",
-    "Scripted", "WriterAccess", "Crowd Content",
-    "Content Harmony", "Eucalypt", "Concurate",
-    "Influence and Co", "Rock Content", "Compose.ly",
-    "Content Cucumber", "Fractl", "Relevance",
-    "Walker Sands", "Velocity Partners",
-]
-
-# =============================================================================
-# SOFTWARE TOOLS TO EXCLUDE for service businesses
-# =============================================================================
-
-SOFTWARE_TOOLS_TO_EXCLUDE = [
-    # Software tools
-    "HubSpot", "Ahrefs", "SEMrush", "Google", "Google Analytics",
-    "Salesforce", "Marketo", "WordPress", "Trello", "Asana",
-    "Notion", "Hootsuite", "Buffer", "Sprout Social", "Moz",
-    "Clearscope", "MarketMuse", "Surfer SEO", "BuzzSumo",
-    "CoSchedule", "Loomly", "Later", "Mailchimp", "ActiveCampaign",
-    "Pardot", "Eloqua", "Monday", "ClickUp", "Basecamp",
-    "Slack", "Microsoft", "Zoom", "Webflow", "Squarespace",
-    "QuickBooks", "Stripe", "Intercom", "Zendesk", "Freshdesk",
-    "ServiceNow", "Zoho", "Pipedrive", "LinkedIn", "Twitter",
-    "Facebook", "Instagram", "YouTube", "TikTok", "Reddit",
-    # Large consulting / enterprise firms - not content agencies
-    "Accenture", "Accenture Interactive", "Deloitte", "Deloitte Digital",
-    "KPMG", "KPMG Digital", "McKinsey", "PwC", "PwC Digital",
-    "IBM", "IBM iX", "Wipro", "Wipro Digital", "Infosys",
-    "Ernst & Young", "EY", "BCG", "Bain", "Capgemini",
-    "Publicis", "Publicis Sapient", "FTI Consulting",
-    "Ogilvy", "WPP", "Dentsu", "Havas", "Grey",
-    # PR and traditional marketing firms not relevant to B2B SaaS content
-    "Weber Shandwick", "Edelman", "Ketchum", "Burson",
-    # Additional firms seen in results
-    "iCrossing", "Reprise", "Merkle", "Performics", "360i",
-    "Digitas", "R/GA", "Razorfish", "SapientRazorfish",
-    "W2O Group", "Havas Health", "Havas Health Plus", "Ogilvy Health",
-    "Finn Partners", "Prosek Partners", "Peppercomm", "Greentarget",
-    "Makovsky", "Inkhouse", "Airfoil Communications",
-    "March Communications", "WE Communications",
-    "Mediacom", "Digitas Health", "CMI Media Group", "FCB Health",
-    "EvokeKyne", "Syneos Health", "AbelsonTaylor", "Medullan",
-    "Cognizant", "Cognizant Digital", "Capgemini Invent",
-    "EY Digital", "EY Consulting", "KPMG Advisory",
-    "PwC Digital Services", "Infosys Consulting", "Infosys Digital",
-    "Colliers", "JLL", "CBRE", "Newmark Knight Frank",
-    "Cushman", "iProspect", "Wavemaker", "Havas",
-    "Investis Digital", "Provencher UX",
-]
 
 
 def detect_business_type(icp_text: str = "", brand_name: str = "") -> str:
+    """
+    Detects whether the brand is primarily a service/agency or a software/product.
+    Returns "service" or "software" as a general signal for the LLM.
+    This is used only as context hint - not for filtering results.
+    """
     combined = (icp_text + " " + brand_name).lower()
     service_score = sum(1 for s in SERVICE_SIGNALS if s in combined)
     software_score = sum(1 for s in SOFTWARE_SIGNALS if s in combined)
@@ -88,22 +35,33 @@ def detect_business_type(icp_text: str = "", brand_name: str = "") -> str:
     return "software"
 
 
-def pass_one_string_match(response_text: str, business_type: str = "software") -> list:
+def pass_one_string_match(
+    response_text: str,
+    business_type: str = "software",
+    target_brand: str = "",
+    user_competitors: list = None
+) -> list:
+    """
+    Pass 1: String matching to catch brands the LLM might miss.
+    Only checks:
+    1. The target brand itself (whole-word match)
+    2. User-supplied competitors from the form (whole-word match)
+    Does NOT use a hardcoded brand list - that approach breaks for global users
+    across different industries. The LLM pass handles broader brand extraction.
+    """
+    import re as _re
     found = []
-    response_lower = response_text.lower()
 
-    if business_type == "service":
-        brand_list = KNOWN_SERVICE_BRANDS
-    else:
-        brand_list = KNOWN_SERVICE_BRANDS + [
-            "ServiceTitan", "Jobber", "Housecall Pro", "Workiz",
-            "ServiceTrade", "FieldEdge", "mHelpDesk", "Kickserv",
-            "GorillaDesk", "PestPac", "ServiceM8", "Commusoft",
-            "Simpro", "BuildOps", "FieldPulse", "Successware",
-        ]
+    # Build the list of brands to check from user-supplied data only
+    brands_to_check = []
+    if target_brand:
+        brands_to_check.append(target_brand)
+    if user_competitors:
+        brands_to_check.extend([c.strip() for c in user_competitors if c.strip()])
 
-    for brand in brand_list:
-        if brand.lower() in response_lower:
+    for brand in brands_to_check:
+        pattern = _re.compile(r"\b" + _re.escape(brand) + r"\b", _re.IGNORECASE)
+        if pattern.search(response_text):
             if brand not in found:
                 found.append(brand)
 
@@ -167,69 +125,45 @@ def pass_two_llm_detection(
     target_brand: str,
     business_type: str = "software"
 ) -> dict:
-
-    if business_type == "service":
-        brand_instruction = """IMPORTANT: This is for a SERVICE BUSINESS, specifically a content marketing agency.
-
-A competitor is ONLY a brand recommended as a B2B content marketing agency, content studio, or niche content consultancy.
-
-Do NOT include any of these - they are either software tools or large enterprise consulting firms, not B2B content agencies:
-Software tools: HubSpot, Ahrefs, SEMrush, Google, Salesforce, Marketo, WordPress, Trello, Asana, Notion, Hootsuite, Moz, Clearscope, MarketMuse, Monday, ClickUp, Slack, Microsoft, Mailchimp.
-Large consulting firms: Accenture, Deloitte, KPMG, McKinsey, PwC, IBM, Wipro, Ernst & Young, EY, BCG, Bain, Capgemini, Publicis, Ogilvy, WPP, Dentsu, FTI Consulting, Publicis Sapient.
-PR firms: Weber Shandwick, Edelman, Ketchum.
-
-Only include brands that are specifically B2B content marketing agencies or content studios - companies whose primary offering is content creation and strategy for B2B companies."""
-    else:
-        brand_instruction = """Extract every software product, platform, or SaaS tool mentioned.
-Include all software brands and tools that appear as recommendations."""
-
-    prompt = f"""Read the AI response below and extract brand mentions.
-
-{brand_instruction}
-
-Return ONLY a valid JSON object. No explanation. No markdown fences.
-
-Format:
-{{
-  "all_brands": ["Brand1", "Brand2"],
-  "target_mentioned": true,
-  "target_position": 1,
-  "target_context": "recommended"
-}}
-
-Rules:
-- all_brands: brands matching the criteria above, in order of appearance
-- target_mentioned: true if "{target_brand}" appears in the response
-- target_position: position of "{target_brand}" (1 = first, 0 = not mentioned)
-- target_context: one of "recommended", "mentioned", "warned_against", "not_mentioned"
-
-Target brand to track: {target_brand}
-
-AI Response to analyze:
-\"\"\"{response_text[:2000]}\"\"\"
-"""
+    """
+    Universal LLM-based brand detection.
+    Works for any industry, any brand, any business type.
+    No hardcoded brand lists or industry-specific filtering.
+    """
+    prompt = (
+        f"Read the AI response below and extract all brand or company names mentioned.\n\n"
+        f"Return ONLY a valid JSON object. No explanation. No markdown fences.\n\n"
+        f"Format:\n"
+        f"{{\n"
+        f"  \"all_brands\": [\"Brand1\", \"Brand2\"],\n"
+        f"  \"target_mentioned\": true,\n"
+        f"  \"target_position\": 1,\n"
+        f"  \"target_context\": \"recommended\"\n"
+        f"}}\n\n"
+        f"Rules:\n"
+        f"- all_brands: list of ALL brand/company/product names in order of appearance\n"
+        f"- target_mentioned: true ONLY if \"{target_brand}\" appears explicitly by name\n"
+        f"- target_position: position of \"{target_brand}\" (1=first, 2=second, 0=not mentioned)\n"
+        f"- target_context: one of recommended / mentioned / warned_against / not_mentioned\n"
+        f"- Do NOT filter any brands - include everything regardless of industry\n"
+        f"- Only set target_mentioned=true if the exact name \"{target_brand}\" appears in the text\n\n"
+        f"Target brand to track: {target_brand}\n\n"
+        f"AI Response to analyze:\n"
+        f"\"\"\"{response_text[:2000]}\"\"\""
+    )
 
     try:
         raw = _call_llm_for_detection(prompt)
         parsed = json.loads(raw)
-
-        # Post-process: always remove software tools for service businesses
-        if business_type == "service":
-            exclude_lower = [t.lower() for t in SOFTWARE_TOOLS_TO_EXCLUDE]
-            parsed["all_brands"] = [
-                b for b in parsed.get("all_brands", [])
-                if b.lower() not in exclude_lower
-            ]
-
         return parsed
-
-    except Exception as e:
+    except Exception:
         return {
             "all_brands": [],
             "target_mentioned": False,
             "target_position": 0,
             "target_context": "not_mentioned"
         }
+
 
 
 def detect_brands(
@@ -248,14 +182,16 @@ def detect_brands(
     if business_type is None:
         business_type = detect_business_type(icp_text, target_brand)
 
-    # Add user competitors to known brands list temporarily
-    if user_competitors:
-        for comp in user_competitors:
-            comp_clean = comp.strip()
-            if comp_clean and comp_clean not in KNOWN_SERVICE_BRANDS:
-                KNOWN_SERVICE_BRANDS.append(comp_clean)
+    # Pass 1: string match on target brand + user competitors only
+    # No hardcoded lists - works correctly for any industry, any user
+    string_matches = pass_one_string_match(
+        response_text,
+        business_type=business_type,
+        target_brand=target_brand,
+        user_competitors=user_competitors or []
+    )
 
-    string_matches = pass_one_string_match(response_text, business_type)
+    # Pass 2: LLM extracts all brand mentions intelligently from the response
     llm_result = pass_two_llm_detection(response_text, target_brand, business_type)
 
     all_brands = llm_result.get("all_brands", [])
@@ -263,20 +199,20 @@ def detect_brands(
         if brand not in all_brands:
             all_brands.append(brand)
 
-    # Final filter: always remove software tools for service businesses
-    if business_type == "service":
-        exclude_lower = [t.lower() for t in SOFTWARE_TOOLS_TO_EXCLUDE]
-        all_brands = [b for b in all_brands if b.lower() not in exclude_lower]
-
-    # Apply custom exclusions from frontend
+    # Apply custom exclusions from frontend (user-defined, not hardcoded)
     if custom_exclusions:
         custom_lower = [t.lower() for t in custom_exclusions]
         all_brands = [b for b in all_brands if b.lower() not in custom_lower]
 
-    target_in_string = any(
-        target_brand.lower() in b.lower() or b.lower() in target_brand.lower()
-        for b in string_matches
+    # Strict string match: only flag as mentioned if the FULL brand name
+    # appears as a whole word in the response text.
+    # We do NOT use partial matches like "ai" in "pqai" as that causes false positives.
+    import re as _re
+    brand_pattern = _re.compile(
+        r"\b" + _re.escape(target_brand) + r"\b",
+        _re.IGNORECASE
     )
+    target_in_string = bool(brand_pattern.search(response_text))
     target_mentioned = llm_result.get("target_mentioned", False) or target_in_string
 
     return {
@@ -290,48 +226,11 @@ def detect_brands(
     }
 
 
-# ─── TEST ─────────────────────────────────────────────────────────────────────
+# Run this file directly to test: python core/brand_detector.py
 if __name__ == "__main__":
-
-    # Test 1: Agency response (HubSpot and Ahrefs should be excluded)
-    agency_response = """
-    If you are looking for a B2B content agency that focuses on pipeline,
-    I would look at Animalz, Grow and Convert, or Siege Media.
-    Animalz is known for deep SaaS content. Grow and Convert focuses
-    specifically on bottom-funnel content that drives signups.
-    Some teams also use HubSpot for CMS and Ahrefs for keyword research
-    but those are tools not agencies. Foundation is also worth evaluating
-    for thought leadership content.
-    """
-
-    print("Test 1: Agency response")
-    print("=" * 60)
-    result = detect_brands(
-        agency_response,
-        target_brand="Concurate",
-        icp_text="content marketing agency retainer B2B SaaS"
-    )
-    print(f"Business type:    {result['business_type_detected']}")
-    print(f"Brands found:     {result['all_brands']}")
-    print(f"HubSpot excluded: {'HubSpot' not in result['all_brands']}")
-    print(f"Ahrefs excluded:  {'Ahrefs' not in result['all_brands']}")
-    print()
-
-    # Test 2: Software response
-    software_response = """
-    For HVAC scheduling, ServiceTitan is the most popular.
-    Jobber is more affordable. Housecall Pro has a great mobile app.
-    All three integrate with QuickBooks.
-    """
-
-    print("Test 2: Software response")
-    print("=" * 60)
-    result2 = detect_brands(
-        software_response,
-        target_brand="ServiceTitan",
-        icp_text="HVAC software scheduling tool"
-    )
-    print(f"Business type: {result2['business_type_detected']}")
-    print(f"Brands found:  {result2['all_brands']}")
-    print("=" * 60)
-    print("Tests complete.")
+    # Quick sanity test
+    test_response = "We recommend Acme Corp and BrandX for your needs. BrandY is also popular."
+    result = detect_brands(test_response, target_brand="Acme Corp")
+    print(f"Target mentioned: {result['target_mentioned']}")
+    print(f"All brands: {result['all_brands']}")
+    print(f"Context: {result['target_context']}")
