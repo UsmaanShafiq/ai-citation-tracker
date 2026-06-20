@@ -793,25 +793,27 @@ elif st.session_state.step == 3:
                     st.session_state.selected_prompts[topic] = [topic]
 
     # Display prompts per topic in accordion style
-    for topic in st.session_state.selected_topics:
+    for t_idx, topic in enumerate(st.session_state.selected_topics):
         prompts = st.session_state.prompts_by_topic.get(topic, [])
         selected = st.session_state.selected_prompts.get(topic, [])
 
         with st.expander(f"**{topic}** ({len(selected)} prompts selected)", expanded=True):
-            for prompt in prompts:
+            for p_idx, prompt in enumerate(prompts):
                 checked = prompt in selected
-                new_checked = st.checkbox(prompt, value=checked, key=f"prompt_{topic}_{prompt[:40]}")
+                # Use topic index + prompt index to guarantee unique keys
+                cb_key = f"prompt_t{t_idx}_p{p_idx}"
+                new_checked = st.checkbox(prompt, value=checked, key=cb_key)
                 if new_checked and prompt not in st.session_state.selected_prompts.get(topic, []):
                     st.session_state.selected_prompts.setdefault(topic, []).append(prompt)
                 elif not new_checked and prompt in st.session_state.selected_prompts.get(topic, []):
                     st.session_state.selected_prompts[topic].remove(prompt)
 
             # Add custom prompt
-            custom_key = f"custom_prompt_{topic[:20]}"
+            custom_key = f"custom_prompt_t{t_idx}"
             custom_prompt = st.text_input("+ Add prompt", key=custom_key,
                                           placeholder="Type a custom prompt and press Enter")
             if custom_prompt.strip() and custom_prompt.strip() not in prompts:
-                if st.button("Add", key=f"add_prompt_btn_{topic[:20]}"):
+                if st.button("Add", key=f"add_prompt_btn_t{t_idx}"):
                     st.session_state.prompts_by_topic[topic].append(custom_prompt.strip())
                     st.session_state.selected_prompts.setdefault(topic, []).append(custom_prompt.strip())
                     st.rerun()
