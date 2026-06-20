@@ -54,27 +54,14 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
         }
 
     # ─── Competitor brand frequency ───────────────────────────────────────────
-    SOFTWARE_EXCLUDE = {
-        "hubspot", "ahrefs", "semrush", "google", "google analytics",
-        "salesforce", "marketo", "wordpress", "trello", "asana",
-        "notion", "hootsuite", "buffer", "moz", "clearscope",
-        "marketmuse", "coschedule", "mailchimp", "activecampaign",
-        "pardot", "monday", "clickup", "slack", "microsoft",
-        "zoom", "webflow", "squarespace", "quickbooks", "stripe",
-        "intercom", "zendesk", "linkedin", "twitter", "facebook",
-        "instagram", "youtube", "canva", "sprout social", "buzzstream",
-        "contentful", "upwork", "clutch", "goodfirms", "paypal",
-        "square", "shopify", "woocommerce", "magento", "freshdesk",
-        "servicenow", "zoho", "pipedrive", "reddit", "tiktok",
-    }
-
+    # No hardcoded exclusion list - works for any industry.
+    # The LLM detection already handles brand extraction correctly.
+    # We only exclude the target brand itself from competitor rankings.
     competitor_counts = defaultdict(int)
     for r in results:
         for brand in r["brands_detected"]["all_brands"]:
             brand_clean = brand.strip()
             if brand_clean.lower() == target_brand.lower():
-                continue
-            if brand_clean.lower() in SOFTWARE_EXCLUDE:
                 continue
             competitor_counts[brand_clean] += 1
 

@@ -57,7 +57,7 @@ def run_on_groq_llama(query: str) -> str:
             response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant. When someone asks about finding an agency, consultant, or service provider, recommend ONLY agency and service provider names. Do not recommend software tools or SaaS products unless the question is specifically about software."},
+                    {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
                     {"role": "user", "content": query}
                 ],
                 max_tokens=800,
@@ -81,7 +81,7 @@ def run_on_groq_mixtral(query: str) -> str:
         response = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant. When someone asks about finding an agency, consultant, or service provider, recommend ONLY agency and service provider names. Do not recommend software tools or SaaS products unless the question is specifically about software."},
+                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
                 {"role": "user", "content": query}
             ],
             max_tokens=800,
@@ -108,7 +108,7 @@ def run_on_perplexity(query: str) -> str:
         payload = {
             "model": "llama-3.1-sonar-small-128k-online",
             "messages": [
-                {"role": "system", "content": "You are a helpful assistant. Always mention specific software brands in recommendations."},
+                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
                 {"role": "user", "content": query}
             ],
             "max_tokens": 800
@@ -202,7 +202,7 @@ def run_on_chatgpt(query: str) -> str:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant. Always mention specific software brands in recommendations."},
+                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
                 {"role": "user", "content": query}
             ],
             max_tokens=800
