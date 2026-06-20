@@ -1,6 +1,5 @@
 import json
 import os
-from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -111,6 +110,58 @@ def pass_one_string_match(response_text: str, business_type: str = "software") -
     return found
 
 
+def _call_llm_for_detection(prompt: str) -> str:
+    """
+    Calls the best available LLM for brand detection.
+    Tries OpenAI first, then Groq as fallback.
+    Returns cleaned JSON string.
+    """
+    import re as _re
+
+    # Try OpenAI first
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if openai_key and "paste_your" not in openai_key.lower():
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            result = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.1
+            )
+            raw = result.choices[0].message.content.strip()
+            # Strip markdown fences if present
+            if raw.startswith("```"):
+                raw = _re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+            return raw
+        except Exception:
+            pass
+
+    # Fallback: Try Groq
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key and "paste_your" not in groq_key.lower():
+        try:
+            from groq import Groq
+            client = Groq(api_key=groq_key)
+            result = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.1
+            )
+            raw = result.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = _re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+            return raw
+        except Exception:
+            pass
+
+    # If both fail, return a safe default JSON
+    return '{"all_brands": [], "target_mentioned": false, "target_position": 0, "target_context": "not_mentioned"}'
+
+
+
 def pass_two_llm_detection(
     response_text: str,
     target_brand: str,
@@ -159,21 +210,7 @@ AI Response to analyze:
 """
 
     try:
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        result = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.1
-        )
-
-        raw = result.choices[0].message.content.strip()
-
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            lines = [l for l in lines if not l.startswith("```")]
-            raw = "\n".join(lines).strip()
-
+        raw = _call_llm_for_detection(prompt)
         parsed = json.loads(raw)
 
         # Post-process: always remove software tools for service businesses

@@ -348,6 +348,13 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
     if session_key not in st.session_state:
         st.session_state[session_key] = []
 
+    # Trick to clear the input field after adding a pill:
+    # We use a counter as part of the widget key. Incrementing it forces
+    # Streamlit to create a fresh empty input widget on the next rerun.
+    clear_key = f"{session_key}_clear_counter"
+    if clear_key not in st.session_state:
+        st.session_state[clear_key] = 0
+
     tags = st.session_state[session_key]
 
     st.markdown(f"**{label}**")
@@ -365,9 +372,12 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
 
     col_in, col_add, col_clear = st.columns([5, 1, 1])
     with col_in:
+        # Include the counter in the key so incrementing it resets the field
         new_val = st.text_input(
-            label, key=f"{session_key}_input",
-            placeholder=placeholder, label_visibility="collapsed"
+            label,
+            key=f"{session_key}_input_{st.session_state[clear_key]}",
+            placeholder=placeholder,
+            label_visibility="collapsed"
         )
     with col_add:
         st.write("")
@@ -379,12 +389,15 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
                     st.session_state[session_key].append(item)
                     added = True
             if added:
+                # Increment counter to force input field to reset to empty
+                st.session_state[clear_key] += 1
                 st.rerun()
     with col_clear:
         if tags:
             st.write("")
             if st.button("Clear", key=f"{session_key}_clear_btn", use_container_width=True):
                 st.session_state[session_key] = []
+                st.session_state[clear_key] += 1
                 st.rerun()
 
     return st.session_state[session_key]
