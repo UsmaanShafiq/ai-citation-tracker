@@ -577,7 +577,7 @@ with st.sidebar:
     if st.button("🔄 Start Over", use_container_width=True):
         for key in ["step", "brand_data", "topics", "selected_topics",
                     "prompts_by_topic", "selected_prompts", "all_results", "run_complete",
-                    "step1_products", "step1_customers", "step1_key_features"]:
+                    "step1_products", "step1_customers", "step1_key_features", "step1_competitors"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
@@ -655,20 +655,22 @@ if st.session_state.step == 1:
     )
 
     col3, col4 = st.columns(2)
-    with col3:
-        _country_options = ["United States", "United Kingdom", "Canada", "Australia",
-                             "Germany", "India", "Pakistan", "Global"]
-        _country_default = _saved.get("country", "United States")
-        _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
-        country = st.selectbox("Country", options=_country_options, index=_country_idx)
-    with col4:
-        _saved_comps = ", ".join(_saved.get("competitors", []))
-        competitors_input = st.text_input(
-            "Your Direct Competitors (recommended)",
-            value=_saved_comps,
-            placeholder="e.g. PatSnap, Ambercite, The Lens",
-            help="Add brands at a similar scale to yours. These will be tracked separately from large dominant platforms like Google."
-        )
+    _country_options = ["United States", "United Kingdom", "Canada", "Australia",
+                         "Germany", "India", "Pakistan", "Global"]
+    _country_default = _saved.get("country", "United States")
+    _country_idx = _country_options.index(_country_default) if _country_default in _country_options else 0
+    country = st.selectbox("Country", options=_country_options, index=_country_idx)
+
+    # Restore competitors pills when navigating back
+    if "step1_competitors" not in st.session_state and _saved.get("competitors"):
+        st.session_state["step1_competitors"] = list(_saved["competitors"])
+
+    competitors_list_input = tag_input(
+        "Your Direct Competitors (recommended)",
+        session_key="step1_competitors",
+        placeholder="Type a competitor name and click Add",
+        help_text="Add brands at a similar scale to yours. These will be tracked separately from dominant platforms like Google."
+    )
 
     st.divider()
 
@@ -684,7 +686,7 @@ if st.session_state.step == 1:
                 "key_features": key_features_list,
                 "business_type": business_type,
                 "country": country,
-                "competitors": [c.strip() for c in competitors_input.split(",") if c.strip()],
+                "competitors": competitors_list_input,
             }
             st.session_state.step = 2
             st.rerun()
