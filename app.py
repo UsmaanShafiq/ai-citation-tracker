@@ -56,21 +56,21 @@ def _get_key(env_key: str) -> str:
 
 def _call_ai_for_json(prompt: str) -> str:
     """Call best available AI model for JSON generation (topics/prompts)."""
-    # Try Groq first (free)
-    groq_key = _get_key("GROQ_API_KEY")
-    if groq_key:
-        try:
-            from groq import Groq
-            client = Groq(api_key=groq_key)
-            resp = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
-                temperature=0.7,
-            )
-            return resp.choices[0].message.content or ""
-        except Exception:
-            pass
+    # GROQ DISABLED - uncomment below to re-enable
+    # groq_key = _get_key("GROQ_API_KEY")
+    # if groq_key:
+    #     try:
+    #         from groq import Groq
+    #         client = Groq(api_key=groq_key)
+    #         resp = client.chat.completions.create(
+    #             model="llama-3.3-70b-versatile",
+    #             messages=[{"role": "user", "content": prompt}],
+    #             max_tokens=2000,
+    #             temperature=0.7,
+    #         )
+    #         return resp.choices[0].message.content or ""
+    #     except Exception:
+    #         pass
 
     # Try Gemini
     gemini_key = _get_key("GEMINI_API_KEY")
@@ -98,7 +98,7 @@ def _call_ai_for_json(prompt: str) -> str:
         except Exception:
             pass
 
-    raise Exception("No available AI model. Please add at least one API key (Groq is free).")
+    raise Exception("No available AI model. Please add at least one API key (Gemini, OpenAI, or Perplexity).")
 
 
 def _parse_json_list(text: str) -> list:
@@ -591,7 +591,7 @@ with st.sidebar:
 
     with st.expander("Manage API Keys"):
         key_fields = {
-            "GROQ_API_KEY": "Groq (Free)",
+            # "GROQ_API_KEY": "Groq (Free)",  # GROQ DISABLED
             "PERPLEXITY_API_KEY": "Perplexity",
             "GEMINI_API_KEY": "Gemini (Free tier)",
             "OPENAI_API_KEY": "OpenAI / ChatGPT",

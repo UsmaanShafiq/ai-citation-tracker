@@ -2,7 +2,7 @@ import os
 import time
 import importlib
 import requests
-from groq import Groq
+# from groq import Groq  # GROQ DISABLED
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,8 +18,8 @@ GEMINI_MODELS = [
 # =============================================================================
 
 usage_stats = {
-    "Groq_Llama3":   {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 14400},
-    "Groq_Mixtral":  {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 14400},
+    # "Groq_Llama3":   {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 14400},  # GROQ DISABLED
+    # "Groq_Mixtral":  {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 14400},  # GROQ DISABLED
     "Perplexity":    {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 1000},
     "Gemini":        {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 1500},
     "ChatGPT":       {"calls": 0, "estimated_tokens": 0, "errors": 0, "free_limit": 0},
@@ -47,52 +47,53 @@ def reset_usage_stats():
 
 
 # =============================================================================
-# FREE TOOLS
+# FREE TOOLS - GROQ DISABLED
+# To re-enable Groq: uncomment the functions below and move entries back to ALL_TOOLS
 # =============================================================================
 
-def run_on_groq_llama(query: str) -> str:
-    for attempt in range(3):
-        try:
-            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-            response = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
-                    {"role": "user", "content": query}
-                ],
-                max_tokens=800,
-                temperature=0.7
-            )
-            result = response.choices[0].message.content.strip()
-            track_usage("Groq_Llama3", result)
-            return result
-        except Exception as e:
-            if "rate" in str(e).lower() and attempt < 2:
-                wait = (attempt + 1) * 5
-                time.sleep(wait)
-            else:
-                track_usage("Groq_Llama3", "", is_error=True)
-                return f"ERROR: {str(e)}"
+# def run_on_groq_llama(query: str) -> str:
+#     for attempt in range(3):
+#         try:
+#             groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+#             response = groq_client.chat.completions.create(
+#                 model="llama-3.3-70b-versatile",
+#                 messages=[
+#                     {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
+#                     {"role": "user", "content": query}
+#                 ],
+#                 max_tokens=800,
+#                 temperature=0.7
+#             )
+#             result = response.choices[0].message.content.strip()
+#             track_usage("Groq_Llama3", result)
+#             return result
+#         except Exception as e:
+#             if "rate" in str(e).lower() and attempt < 2:
+#                 wait = (attempt + 1) * 5
+#                 time.sleep(wait)
+#             else:
+#                 track_usage("Groq_Llama3", "", is_error=True)
+#                 return f"ERROR: {str(e)}"
 
 
-def run_on_groq_mixtral(query: str) -> str:
-    try:
-        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        response = groq_client.chat.completions.create(
-            model="mixtral-8x7b-32768",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=800,
-            temperature=0.7
-        )
-        result = response.choices[0].message.content.strip()
-        track_usage("Groq_Mixtral", result)
-        return result
-    except Exception as e:
-        track_usage("Groq_Mixtral", "", is_error=True)
-        return run_on_groq_llama(query)
+# def run_on_groq_mixtral(query: str) -> str:
+#     try:
+#         groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+#         response = groq_client.chat.completions.create(
+#             model="mixtral-8x7b-32768",
+#             messages=[
+#                 {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
+#                 {"role": "user", "content": query}
+#             ],
+#             max_tokens=800,
+#             temperature=0.7
+#         )
+#         result = response.choices[0].message.content.strip()
+#         track_usage("Groq_Mixtral", result)
+#         return result
+#     except Exception as e:
+#         track_usage("Groq_Mixtral", "", is_error=True)
+#         return run_on_groq_llama(query)
 
 
 # =============================================================================
@@ -239,26 +240,29 @@ def run_on_claude(query: str) -> str:
 # =============================================================================
 
 # =============================================================================
-# GROQ TOOLS - currently disabled. To re-enable, move them back into ALL_TOOLS.
+# GROQ TOOLS - currently disabled. To re-enable:
+# 1. Uncomment the functions above
+# 2. Uncomment DISABLED_TOOLS below
+# 3. Move the entries into ALL_TOOLS
 # =============================================================================
-DISABLED_TOOLS = {
-    "Groq_Llama3": {
-        "fn": run_on_groq_llama,
-        "free": True,
-        "requires_key": "GROQ_API_KEY",
-        "cost_per_call": 0.0,
-        "free_limit": 14400,
-        "description": "Llama 3.3 70B via Groq. Free tier."
-    },
-    "Groq_Mixtral": {
-        "fn": run_on_groq_mixtral,
-        "free": True,
-        "requires_key": "GROQ_API_KEY",
-        "cost_per_call": 0.0,
-        "free_limit": 14400,
-        "description": "Mixtral 8x7B via Groq. Free tier."
-    },
-}
+# DISABLED_TOOLS = {
+#     "Groq_Llama3": {
+#         "fn": run_on_groq_llama,
+#         "free": True,
+#         "requires_key": "GROQ_API_KEY",
+#         "cost_per_call": 0.0,
+#         "free_limit": 14400,
+#         "description": "Llama 3.3 70B via Groq. Free tier."
+#     },
+#     "Groq_Mixtral": {
+#         "fn": run_on_groq_mixtral,
+#         "free": True,
+#         "requires_key": "GROQ_API_KEY",
+#         "cost_per_call": 0.0,
+#         "free_limit": 14400,
+#         "description": "Mixtral 8x7B via Groq. Free tier."
+#     },
+# }
 
 ALL_TOOLS = {
     "Perplexity": {
@@ -311,7 +315,7 @@ def run_selected_tools(query: str, selected_tools: list) -> dict:
 
 
 def get_active_tool_names() -> list:
-    return ["Groq_Llama3", "Groq_Mixtral"]
+    return []  # Groq disabled
 
 
 def check_key_exists(env_key: str) -> bool:
