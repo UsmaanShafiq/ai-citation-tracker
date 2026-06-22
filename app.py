@@ -244,18 +244,36 @@ def ai_generate_topics(brand_data: dict) -> list:
         + country_note
     )
 
+    # Extract individual key features to use as topic angles
+    key_features_list = brand_data.get("key_features", [])
+
+    # Build a features-driven topic hint
+    # This ensures topics reflect what makes THIS brand unique
+    # not just generic category searches
+    feature_hint = ""
+    if key_features_list:
+        feature_hint = (
+            "\nIMPORTANT - Use these key differentiators to create feature-specific topics:\n"
+            + "\n".join([f"- {f}" for f in key_features_list[:6]])
+            + "\nAt least 2-3 topics should be based on these specific features/differentiators.\n"
+            "For example if a feature is 'semantic search using AI', generate a topic like "
+            "'semantic AI patent search tools' not just 'patent search tools'.\n"
+        )
+
     prompt = (
         "You track brand visibility in AI search tools like ChatGPT and Perplexity.\n\n"
-        "Based on the brand below, generate 5 search topics that a potential BUYER "
+        "Based on the brand below, generate 7 search topics that a potential BUYER "
         "would type when they want an AI to recommend a specific " + solution_type + ".\n\n"
-        + context + "\n"
+        + context
+        + feature_hint + "\n"
         "RULES:\n"
         "- Every topic must be something where an AI would respond by naming specific brands\n"
         "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\n"
         "- Do NOT generate how-to, strategy, tips, or educational topics\n"
         "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
-        "- Vary the topics: mix of direct search, comparison, and use-case topics\n"
-        + (f"- For 1 topic, add '{country}' at the end to make it location-specific (e.g. 'best patent search software {country}')\n" if country and country.lower() not in ["global", "united states", ""] else "") +
+        "- Mix: 2-3 topics based on key differentiators above, rest based on general category search\n"
+        "- Vary: direct search, comparison, use-case, feature-specific\n"
+        + (f"- For 1 topic, add '{country}' at the end\n" if country and country.lower() not in ["global", "united states", ""] else "") +
         "\nGenerate exactly 7 short topics (3-8 words each).\n"
         "Respond ONLY with a JSON array of 7 strings. No explanation, no markdown."
     )
@@ -795,7 +813,9 @@ if st.session_state.step == 1:
         elif not competitors_list_input:
             st.error("⚠️ Competitors are required. Add at least one direct competitor for accurate comparison prompts and benchmarking.")
         else:
-            st.session_state.brand_data = {
+            # Check if brand data has changed from previous session
+            prev_data = st.session_state.get("brand_data", {})
+            new_data = {
                 "name": brand_name.strip(),
                 "domain": brand_domain.strip(),
                 "products": products_list,
@@ -805,6 +825,25 @@ if st.session_state.step == 1:
                 "country": country,
                 "competitors": competitors_list_input,
             }
+            # If anything changed, clear all downstream cached data
+            data_changed = (
+                prev_data.get("name") != new_data["name"] or
+                prev_data.get("domain") != new_data["domain"] or
+                prev_data.get("products") != new_data["products"] or
+                prev_data.get("customers") != new_data["customers"] or
+                prev_data.get("key_features") != new_data["key_features"] or
+                prev_data.get("business_type") != new_data["business_type"] or
+                prev_data.get("country") != new_data["country"] or
+                prev_data.get("competitors") != new_data["competitors"]
+            )
+            st.session_state.brand_data = new_data
+            if data_changed:
+                for key in ["topics", "selected_topics", "prompts_by_topic",
+                            "selected_prompts", "all_results", "run_complete"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                # Force website re-fetch since domain may have changed
+                st.session_state.brand_data.pop("_website_text", None)
             st.session_state.step = 2
             st.rerun()
 
@@ -903,9 +942,15 @@ elif st.session_state.step == 2:
     col_back, col_next = st.columns([1, 3])
     with col_back:
         if st.button("← Back"):
+            # Clear ALL cached data so everything regenerates fresh from Step 1 edits
             st.session_state.step = 1
-            st.session_state.topics = []
-            st.session_state.selected_topics = []
+            for key in ["topics", "selected_topics", "prompts_by_topic",
+                        "selected_prompts", "all_results", "run_complete"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            # Clear cached website text so it re-fetches with any domain changes
+            if "brand_data" in st.session_state:
+                st.session_state.brand_data.pop("_website_text", None)
             st.rerun()
     with col_next:
         if st.button("Next: Generate Prompts →", type="primary"):
@@ -1003,7 +1048,11 @@ elif st.session_state.step == 3:
     col_back, col_next = st.columns([1, 3])
     with col_back:
         if st.button("← Back"):
+            # Clear prompts and results so they regenerate if topics changed
             st.session_state.step = 2
+            for key in ["prompts_by_topic", "selected_prompts", "all_results", "run_complete"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
     with col_next:
         total_selected = sum(len(v) for v in st.session_state.selected_prompts.values())
