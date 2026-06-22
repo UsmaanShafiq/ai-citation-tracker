@@ -1938,12 +1938,28 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Linked sites
+                                # Web sources — displayed like ChatGPT source citations
                                 linked = r.get("linked_sites", [])
-                                if linked:
+                                web_searched_r = r.get("web_searched", False)
+
+                                if web_searched_r and linked:
+                                    st.markdown("**🌐 Web Sources Used**")
+                                    st.caption("Response grounded in live web search — same as ChatGPT web interface.")
+                                    for s in linked[:8]:
+                                        title = s.get("title") or s.get("domain", "Source")
+                                        url = s.get("url", "")
+                                        domain = s.get("domain", "")
+                                        if url:
+                                            st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
+                                elif web_searched_r:
+                                    st.caption("🌐 Web search was used for this response.")
+                                elif linked:
                                     st.caption("**Linked Sites:**")
-                                    link_rows = [{"#": s["rank"], "Domain": s["domain"], "URL": s["url"]} for s in linked]
-                                    st.dataframe(pd.DataFrame(link_rows), use_container_width=True, hide_index=True)
+                                    for s in linked[:5]:
+                                        url = s.get("url", "")
+                                        domain = s.get("domain", url)
+                                        if url:
+                                            st.markdown(f"&nbsp;&nbsp;🔗 [{domain}]({url})")
 
                                 # AI Response - highlighted brand mentions
                                 response = r.get("response", "")
