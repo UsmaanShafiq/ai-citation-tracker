@@ -1007,7 +1007,7 @@ if st.session_state.step == 1:
             "Describe your business type",
             value=_custom_default,
             placeholder="e.g. Training / Education, Non-profit, Government, Hardware, SaaS marketplace...",
-            key="custom_business_type"
+            key="step1_custom_business_type"
         )
         if not business_type.strip():
             business_type = "Other"
