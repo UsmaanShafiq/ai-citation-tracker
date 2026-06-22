@@ -255,7 +255,7 @@ def ai_generate_topics(brand_data: dict) -> list:
         "- Do NOT generate how-to, strategy, tips, or educational topics\n"
         "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
         "- Vary the topics: mix of direct search, comparison, and use-case topics\n"
-        + (f"- Include '{country}' in 1-2 topics where it makes the search more specific\n" if country and country.lower() != "global" else "") +
+        + (f"- For 1 topic, add '{country}' at the end to make it location-specific (e.g. 'best patent search software {country}')\n" if country and country.lower() not in ["global", "united states", ""] else "") +
         "\nGenerate exactly 7 short topics (3-8 words each).\n"
         "Respond ONLY with a JSON array of 7 strings. No explanation, no markdown."
     )
@@ -390,19 +390,20 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "- Conversational: \'what should I use for prior art search\' not \'Which tool is optimal for prior art search??\'\n"
         "- Natural: no formal structure, no AI-sounding language\n"
         "- They do NOT mention country names - they just type what they want\n\n"
-        "GENERATE EXACTLY 4 PROMPTS:\n"
-        "1. DIRECT SEARCH: 3-5 words, exactly what someone types. No question mark. Like: \'best ai patent search tool\'\n"
-        "2. NATURAL QUESTION: casual question about the topic. Like: \'what\'s a good tool for finding prior art?\' or \'which content agency is best for saas?\'\n"
-        "3. COMPARISON: compare " + (" vs ".join(comp_for_comparison) if competitors and len(comp_for_comparison) >= 2 else "two known options in this space") + " for this topic\n"
-        "4. PERSONA: \'I\'m a " + persona_role + " at a [company]. I need [specific need from topic]. What do you recommend?\' - keep it casual and real\n\n"
-        "STRICT RULES:\n"
-        "- NEVER mention \"" + brand_name + "\" in any prompt\n"
-        "- DO NOT add country names inside prompts - location context is handled separately\n"
-        "- DO NOT use year numbers\n"
-        "- Every prompt must be ONE standalone string - do not merge them\n"
-        "- Each prompt must stay strictly within the TOPIC above\n"
-        + avoid_line +
-        "\nRespond ONLY with a JSON array of exactly 4 strings. No markdown. No explanation."
+        "GENERATE EXACTLY 4 PROMPTS - each must be different in style AND specific to the TOPIC below:\n"
+        "TOPIC: " + topic + "\n\n"
+        "1. DIRECT SEARCH: 3-5 words taken directly from the topic. No question mark. Must use words from the topic, not a generic phrase.\n"
+        "2. NATURAL QUESTION: a casual question specifically about the topic. Not a generic question - must reference what this topic is actually about.\n"
+        "3. COMPARISON: compare " + (" vs ".join(comp_for_comparison) if competitors and len(comp_for_comparison) >= 2 else (competitors[0] + " and other alternatives") if competitors else "two options in this space") + " for this specific use case\n"
+        "4. PERSONA: I am a " + persona_role + " at a [type of company]. I need [specific need related to the topic]. What do you recommend? - Keep it casual, 1-2 sentences\n\n"
+        "RULES:\n"
+        "- NEVER say " + brand_name + "\n"
+        "- Every prompt must be about the TOPIC above - not a generic question\n"
+        "- Prompt 2 must be clearly different from Prompt 1 in wording\n"
+        "- No country names in prompts\n"
+        "- No year numbers\n"
+        "- Each is ONE standalone string\n"
+        "\nRespond ONLY with a JSON array of exactly 4 strings. No markdown."
     )
 
     raw = _call_ai_for_json(prompt)
