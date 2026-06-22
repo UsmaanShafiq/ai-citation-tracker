@@ -271,8 +271,6 @@ def ai_generate_topics(brand_data: dict) -> list:
         "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\n"
         "- Do NOT generate how-to, strategy, tips, or educational topics\n"
         "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
-        "- Every topic MUST contain a category anchor word like: agency, agencies, firm, firms, service, services, tool, tools, software, platform, company, companies\\n"
-        "- Use the brand\'s own language from the website content above\\n"
         "- Mix: 2-3 topics based on key differentiators above, rest based on general category search\n"
         "- Vary: direct search, comparison, use-case, feature-specific\n"
         + (f"- For 1 topic, add '{country}' at the end\n" if country and country.lower() not in ["global", "united states", ""] else "") +
@@ -281,8 +279,24 @@ def ai_generate_topics(brand_data: dict) -> list:
     )
 
     raw = _call_ai_for_json(prompt)
-    topics = _parse_json_list(raw)
+    parsed_topics = _parse_json_list(raw)
     brand_lower = brand_name.lower()
+    topics = []
+    topic_intents = {}
+    for item in parsed_topics:
+        if isinstance(item, dict):
+            t = item.get("topic", item.get("name", "")).strip()
+            intent = item.get("intent", item.get("reason", "")).strip()
+            if t:
+                topics.append(t)
+                if intent:
+                    topic_intents[t] = intent
+        elif isinstance(item, str) and item.strip():
+            topics.append(item.strip())
+    if "brand_data" in dir() or True:
+        import streamlit as _st2
+        if "brand_data" in _st2.session_state:
+            _st2.session_state.brand_data["_topic_intents"] = topic_intents
 
     # Filter out topics that are too vague or likely to produce wrong results
     # These are patterns that make ChatGPT give generic advice instead of brand names
@@ -298,10 +312,7 @@ def ai_generate_topics(brand_data: dict) -> list:
         "definition", "what is", "benefits of", "advantages of",
     ]
     # Standalone vague nouns that only work when combined with agency/firm/service
-    vague_standalone = [
-        "providers", "solutions", "platforms", "consultants", "consultancies",
-        "writing services", "content writing", "writing service"
-    ]
+    vague_standalone = ["providers", "solutions", "platforms", "consultants", "consultancies"]
 
     filtered = []
     for t in topics:
@@ -397,10 +408,8 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     # Country as system context not in prompt text
     country_system = ""
-    country_suffix = ""
-    if country and country.lower() not in ["global", "united states", ""]:
+    if country and country.lower() not in ["global", ""]:
         country_system = f"\nUser location context: {country}. Tailor relevance to this market."
-        country_suffix = f" {country}"
 
     prompt = (
         "You generate search prompts for AI visibility tracking.\n\n"
@@ -415,149 +424,52 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "- Conversational: \'what should I use for prior art search\' not \'Which tool is optimal for prior art search??\'\n"
         "- Natural: no formal structure, no AI-sounding language\n"
         "- They do NOT mention country names - they just type what they want\n\n"
-        "GENERATE EXACTLY 4 PROMPTS - each must be different in style AND specific to the TOPIC below:\n"
+        "GENERATE EXACTLY 5 PROMPTS using 5 distinct angles to account for LLM non-determinism.\n"
+        "Different phrasing yields different brand recommendations - we test all angles.\n\n"
         "TOPIC: " + topic + "\n\n"
-        "1. DIRECT SEARCH: 3-5 words taken directly from the topic. No question mark. Must use words from the topic, not a generic phrase.\n"
-        "2. NATURAL QUESTION: a casual question specifically about the topic. Not a generic question - must reference what this topic is actually about.\n"
-        "3. COMPARISON: compare " + (" vs ".join(comp_for_comparison) if competitors and len(comp_for_comparison) >= 2 else (competitors[0] + " and other alternatives") if competitors else "two options in this space") + " for this specific use case\n"
-        "4. PERSONA: I am a " + persona_role + " at a [type of company]. I need [specific need related to the topic]. What do you recommend? - Keep it casual, 1-2 sentences\n\n"
+        "1. DIRECT SEARCH: 3-5 words as typed in a search bar. No question mark.\n"
+        "2. NATURAL QUESTION: Casual full question about the topic, like asking a friend.\n"
+        "3. COMPARISON: Compare " + (" vs ".join(comp_for_comparison) if competitors and len(comp_for_comparison) >= 2 else (competitors[0] + " vs alternatives") if competitors else "two known options") + " specifically for this topic.\n"
+        "4. PERSONA: I am a " + persona_role + " at a [company type]. I need [specific need from topic]. Who do you recommend?\n"
+        "5. COLLOQUIAL: Ultra short 2-5 words, informal, like a quick text. Must end with ?\n\n"
         "RULES:\n"
-        "- NEVER say " + brand_name + "\n"
-        "- Every prompt must be about the TOPIC above - not a generic question\n"
-        "- Every prompt must make ChatGPT NAME SPECIFIC BRANDS OR AGENCIES in its response\n"
-        "- Prompt 2 must be clearly different from Prompt 1 in wording\n"
-        "- No country names in prompts\n"
-        "- No year numbers\n"
-        "- Each is ONE standalone string\n"
-        "- Every prompt MUST force ChatGPT to name specific brands, agencies, or tools\n"
-        "- BAD (will get generic advice or zero brands):\n"
-        "  * Pure noun phrases: \'bottom-funnel content providers\', \'LinkedIn ghostwriting services\'\n"
-        "  * Knowledge questions: \'how to improve AI visibility\', \'what is bottom-funnel content\'\n"
-        "  * Persona without a clear ask: \'I need help with content\' — must end with \'who do you recommend?\'\n"
-        "- GOOD (will get brand citations):\n"
-        "  * Direct search with qualifier: \'best agencies for revenue-driven B2B content\'\n"
-        "  * Clear question: \'which agency is best for SaaS bottom-funnel content?\'\n"
-        "  * Strong persona: \'I am a VP of Marketing. I need a content agency for SaaS. Who do you recommend?\'\n"
-        "  * Comparison: \'Animalz vs Siege Media for B2B SaaS content — which is better?\'\n"
-        "\nRespond ONLY with a JSON array of exactly 4 strings. No markdown."
+        "- NEVER mention \"" + brand_name + "\" in any prompt\n"
+        "- Every prompt must force ChatGPT to NAME SPECIFIC BRANDS\n"
+        "- Every prompt must stay on TOPIC: " + topic + "\n"
+        "- No year numbers, no country names\n"
+        "- BAD: bare noun phrases, knowledge questions, personas without a recommendation ask\n"
+        "\nReturn ONLY a JSON array of exactly 5 strings. No markdown, no explanation."
     )
 
-    import re as _re
-    year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
-    brand_lower = brand_name.lower()
-    topic_lower = topic.lower().strip()
-
-    # Universal structural validator - works for any niche, any industry
-    # A prompt is GOOD if it will force ChatGPT to name specific brands
-    # A prompt is BAD if ChatGPT will respond with generic advice, tools, or nothing
-
-    # Trigger words that force brand/agency citations in any niche
-    CITATION_TRIGGERS = [
-        "recommend", "suggest", "which", "what's the best", "who should",
-        "compare", "vs", "versus", "alternative", "alternatives",
-        "top", "best", "leading", "agency", "agencies", "firm", "firms",
-        "company", "companies", "tool", "tools", "software", "platform",
-        "service provider", "vendor", "who do you", "any suggestions",
-        "what do you", "which one", "who offers"
-    ]
-
-    # Words that indicate a statement (not a question) with no brand ask
-    STATEMENT_SIGNALS = [
-        "how to", "what is", "what are the benefits", "what does",
-        "explain", "guide", "tutorial", "tips for", "ways to",
-        "understanding", "introduction to", "overview of", "learn",
-        "difference between", "why is", "when should", "how does",
-        "what makes", "how can i improve", "how do i"
-    ]
-
-    def is_citation_producing(p):
-        """
-        Returns True if this prompt will force ChatGPT to name specific brands.
-        Universal logic - works for any industry, any niche.
-        """
-        pl = p.lower().strip()
-
-        # Rule 1: Must have at least one citation trigger
-        has_trigger = any(trigger in pl for trigger in CITATION_TRIGGERS)
-
-        # Rule 2: Must NOT be a pure knowledge/information question
-        is_informational = any(signal in pl for signal in STATEMENT_SIGNALS)
-
-        # Rule 3: Persona prompts must end with a recommendation ask
-        is_persona = pl.startswith("i ") or pl.startswith("i'm") or pl.startswith("i am")
-        if is_persona:
-            has_ask = any(ask in pl for ask in ["recommend", "suggest", "what do you", "any suggestions", "who should"])
-            return has_ask
-
-        # Rule 4: Short noun phrases without triggers are bad (e.g. "bottom-funnel content providers")
-        words = pl.split()
-        if len(words) <= 5 and not has_trigger and "?" not in pl:
-            return False
-
-        return has_trigger and not is_informational
-
-    def is_bad_prompt(p):
-        """Returns True if this prompt should be rejected and regenerated."""
-        return not is_citation_producing(p)
-
-    def process_raw(raw_prompts):
-        """Clean, filter, and validate a list of raw prompts."""
-        cleaned = []
-        for p in raw_prompts:
-            p = p.strip()
-            if not p:
-                continue
-            # Strip year numbers
-            p = year_pattern.sub("", p).strip()
-            p = " ".join(p.split())
-            # Skip if contains brand name
-            if brand_lower in p.lower():
-                continue
-            # Skip exact duplicates of topic
-            if p.lower() == topic_lower:
-                continue
-            # Skip duplicates already in list
-            if p.lower() in [x.lower() for x in cleaned]:
-                continue
-            # Skip prompts that will produce bad results
-            if is_bad_prompt(p):
-                continue
-            cleaned.append(p)
-        return cleaned
-
-    # First attempt
     raw = _call_ai_for_json(prompt)
     prompts = _parse_json_list(raw)
-    result = [topic] + process_raw(prompts)
 
-    # Add country variant if needed and not US
-    if country_suffix and len(result) < 5:
+    # Post-process: strip any year references dynamically
+    import re as _re
+    year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
+    prompts = [year_pattern.sub("", p).strip() for p in prompts]
+    # Clean up any double spaces left after year removal
+    prompts = [" ".join(p.split()) for p in prompts]
+
+    brand_lower = brand_name.lower()
+    clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
+
+    # Use 90% word overlap threshold for deduplication
+    # Exact match filtering was removing valid prompts that were slightly different
+    def _too_similar(p, t):
+        p_w = set(p.lower().split())
+        t_w = set(t.lower().split())
+        if not t_w:
+            return False
+        return len(p_w & t_w) / len(t_w) > 0.9
+
+    result = [topic] + [p for p in clean if not _too_similar(p, topic)]
+
+    # For non-US countries, add location variant
+    if country_suffix and len(result) < 6:
         location_prompt = topic + country_suffix
         if location_prompt.lower() not in [r.lower() for r in result]:
             result.append(location_prompt)
-
-    # If still under 5, regenerate and fill gaps - up to 2 extra attempts
-    attempts = 0
-    while len(result) < 5 and attempts < 2:
-        attempts += 1
-        retry_prompt = (
-            prompt +
-            f"\n\nIMPORTANT: The previous response was not enough. "
-            f"Generate 4 MORE prompts that are DIFFERENT from these already generated:\n" +
-            "\n".join(f"- {r}" for r in result)
-        )
-        try:
-            raw2 = _call_ai_for_json(retry_prompt)
-            extra = _parse_json_list(raw2)
-            new_clean = process_raw(extra)
-            # Add only what we still need
-            for p in new_clean:
-                if p.lower() not in [r.lower() for r in result]:
-                    result.append(p)
-                if len(result) >= 5:
-                    break
-        except Exception:
-            break
 
     return result[:5]
 
@@ -981,126 +893,17 @@ elif st.session_state.step == 2:
 
     # Auto-generate if not done yet
     if not st.session_state.topics:
-
-        # ── Step 1: Show iframe preview + fetch website in parallel ──────────
-        domain = bd.get("domain", "")
-
-        # Build the full URL for iframe display
-        iframe_url = domain if domain.startswith("http") else f"https://{domain}"
-
-        # Show the website in an iframe so the user can see we are visiting it
-        st.markdown("#### 🌐 Visiting your website...")
-        st.caption(f"We are reading: **{iframe_url}**")
-
-        # Embed the actual website in an iframe
-        st.components.v1.iframe(
-            src=iframe_url,
-            height=320,
-            scrolling=True
-        )
-
-        # Now fetch the content in background
-        with st.spinner("📖 Reading and extracting content from your website..."):
+        with st.spinner("Visiting brand website for context..."):
+            # Fetch website once and cache in brand_data to reuse in prompt generation
             if "_website_text" not in st.session_state.brand_data:
-                website_text = fetch_brand_website(domain)
+                website_text = fetch_brand_website(bd.get("domain", ""))
                 st.session_state.brand_data["_website_text"] = website_text
-            else:
-                website_text = st.session_state.brand_data.get("_website_text", "")
-
-        # ── Step 2: Show what was understood from the website ─────────────────
-        if website_text:
-            # Use AI to summarize what was understood about the brand from the website
-            understanding_prompt = (
-                "You just read the homepage of a brand. Based on the content below, "
-                "write a SHORT 3-4 sentence summary explaining:\n"
-                "1. What this brand does\n"
-                "2. Who their customers are\n"
-                "3. What makes them different\n\n"
-                "Be specific and factual. Only use what is actually on the page.\n"
-                "Do not invent anything. Write in plain English.\n\n"
-                "Website content:\n" + website_text[:3000]
-            )
-            with st.spinner("🧠 Reading and understanding your website..."):
-                try:
-                    brand_understanding = _call_ai_for_json(
-                        understanding_prompt + "\n\nRespond with plain text only, no JSON, no bullet points."
-                    )
-                except Exception:
-                    brand_understanding = ""
-
-            st.success(f"✅ Website fetched successfully from {bd.get('domain', '')}")
-            with st.expander("📋 Brand Intelligence Summary", expanded=True):
-
-                # ── Section 1: From Website ───────────────────────────────
-                st.markdown("### 🌐 From Your Website")
-                st.caption(f"Fetched from: {bd.get('domain', '')}")
-                if brand_understanding:
-                    st.info(brand_understanding)
+                if website_text:
+                    st.success(f"Website read successfully ({len(website_text)} chars). Generating topics...")
                 else:
-                    st.info(website_text[:400] + "...")
+                    st.warning("Could not read website. Using form data only.")
 
-                st.divider()
-
-                # ── Section 2: From Form ──────────────────────────────────
-                st.markdown("### 📝 From Your Form")
-                st.caption("This is what you entered manually in Step 1.")
-
-                form_cols = st.columns(2)
-                with form_cols[0]:
-                    if bd.get("products"):
-                        st.markdown("**📦 Products / Services**")
-                        for p in bd["products"]:
-                            st.markdown(f"- {p}")
-                    if bd.get("customers"):
-                        st.markdown("**👥 Target Customers**")
-                        for c in bd["customers"]:
-                            st.markdown(f"- {c}")
-                with form_cols[1]:
-                    if bd.get("key_features"):
-                        st.markdown("**⭐ Key Differentiators**")
-                        for f in bd["key_features"]:
-                            st.markdown(f"- {f}")
-                    if bd.get("competitors"):
-                        st.markdown("**🏁 Direct Competitors**")
-                        for comp in bd["competitors"]:
-                            st.markdown(f"- {comp}")
-                    st.markdown(f"**🌍 Country:** {bd.get('country', 'United States')}")
-                    st.markdown(f"**🏢 Business Type:** {bd.get('business_type', '')}")
-
-                st.divider()
-                st.success("✅ Topics will be generated using BOTH your website content and your form data.")
-        else:
-            st.warning(
-                "⚠️ Could not read your website automatically. "
-                "Topics will be generated from your form data only. "
-                "Check that your domain is correct and publicly accessible."
-            )
-            with st.expander("📋 Form Data Being Used", expanded=True):
-                st.markdown("### 📝 From Your Form")
-                st.caption("Website could not be fetched — using form data only.")
-                form_cols2 = st.columns(2)
-                with form_cols2[0]:
-                    if bd.get("products"):
-                        st.markdown("**📦 Products / Services**")
-                        for p in bd["products"]:
-                            st.markdown(f"- {p}")
-                    if bd.get("customers"):
-                        st.markdown("**👥 Target Customers**")
-                        for c in bd["customers"]:
-                            st.markdown(f"- {c}")
-                with form_cols2[1]:
-                    if bd.get("key_features"):
-                        st.markdown("**⭐ Key Differentiators**")
-                        for f in bd["key_features"]:
-                            st.markdown(f"- {f}")
-                    if bd.get("competitors"):
-                        st.markdown("**🏁 Direct Competitors**")
-                        for comp in bd["competitors"]:
-                            st.markdown(f"- {comp}")
-                    st.markdown(f"**🌍 Country:** {bd.get('country', 'United States')}")
-
-        # ── Step 3: Generate topics ───────────────────────────────────────────
-        with st.spinner("🔍 Generating topics based on your brand profile..."):
+        with st.spinner("Generating topics from your brand profile..."):
             try:
                 generated = ai_generate_topics(st.session_state.brand_data)
                 st.session_state.topics = generated
@@ -1115,6 +918,7 @@ elif st.session_state.step == 2:
         selected_count = len(st.session_state.selected_topics)
         st.success(f"✓ {selected_count} topic{'s' if selected_count != 1 else ''} selected")
 
+        topic_intents = st.session_state.brand_data.get("_topic_intents", {})
         st.write("**AI Generated Topics** (uncheck to remove, click ✏️ to edit):")
         for t_idx, topic in enumerate(st.session_state.topics):
             checked = topic in st.session_state.selected_topics
@@ -1125,6 +929,8 @@ elif st.session_state.step == 2:
                     st.session_state.selected_topics.append(topic)
                 elif not new_checked and topic in st.session_state.selected_topics:
                     st.session_state.selected_topics.remove(topic)
+                if topic in topic_intents:
+                    st.caption(f"💡 {topic_intents[topic]}")
             with col_edit:
                 edit_key = f"topic_edit_mode_{t_idx}"
                 if st.button("✏️", key=f"topic_edit_btn_{t_idx}", help="Edit this topic"):
@@ -1201,11 +1007,21 @@ elif st.session_state.step == 3:
     st.subheader("Step 3: Review Prompts")
     st.caption("These prompts will be sent to each AI model to check if your brand is mentioned.")
 
-    # Generate prompts for each selected topic FIRST before showing count
+    total_topics = len(st.session_state.selected_topics)
+    # Calculate actual prompt count from selected prompts, not assumed 5 per topic
+    total_prompts = sum(
+        len(st.session_state.selected_prompts.get(t, []))
+        for t in st.session_state.selected_topics
+    )
+    avg_per_topic = round(total_prompts / total_topics, 1) if total_topics > 0 else 0
+    st.info(f"**{total_topics} topics × {avg_per_topic} avg prompts = {total_prompts} total prompts** per AI model")
+
+    # Generate prompts for each selected topic if not done
     for topic in st.session_state.selected_topics:
         if topic not in st.session_state.prompts_by_topic:
             with st.spinner(f"Generating prompts for: {topic}..."):
                 try:
+                    # Pass full brand_data including cached website text
                     prompts = ai_generate_prompts(topic, st.session_state.brand_data)
                     st.session_state.prompts_by_topic[topic] = prompts
                     st.session_state.selected_prompts[topic] = list(prompts)
@@ -1213,22 +1029,6 @@ elif st.session_state.step == 3:
                     st.warning(f"Could not generate prompts for '{topic}': {format_error_message(str(e))}")
                     st.session_state.prompts_by_topic[topic] = [topic]
                     st.session_state.selected_prompts[topic] = [topic]
-
-    # Count AFTER generation so numbers are accurate
-    total_topics = len(st.session_state.selected_topics)
-    all_generated = all(
-        t in st.session_state.prompts_by_topic
-        for t in st.session_state.selected_topics
-    )
-    total_prompts = sum(
-        len(st.session_state.selected_prompts.get(t, []))
-        for t in st.session_state.selected_topics
-    )
-    if all_generated and total_topics > 0:
-        avg_per_topic = round(total_prompts / total_topics, 1)
-        st.info(f"**{total_topics} topics × {avg_per_topic} avg prompts = {total_prompts} total prompts** per AI model")
-    else:
-        st.info(f"**{total_topics} topics** — generating prompts...")
 
     # Display prompts per topic in accordion style
     for t_idx, topic in enumerate(st.session_state.selected_topics):
@@ -1533,20 +1333,41 @@ elif st.session_state.step == 4:
                     })
                     st.bar_chart(t_df.set_index("Topic"), use_container_width=True, color="#16a34a")
 
-            # ── Context breakdown ────────────────────────────────────────
+            # ── Recommendation Share + Context breakdown ─────────────────
             ctx = scores["context_breakdown"]
-            total_ctx = sum(ctx.values()) or 1
-            st.markdown("**How Your Brand Was Mentioned**")
-            ctx_cols = st.columns(4)
-            ctx_data = [
-                ("🟢 Recommended", ctx.get("recommended", 0)),
-                ("🔵 Mentioned", ctx.get("mentioned", 0)),
-                ("🔴 Warned Against", ctx.get("warned_against", 0)),
-                ("⚪ Not Mentioned", ctx.get("not_mentioned", 0)),
-            ]
-            for col, (label, count) in zip(ctx_cols, ctx_data):
-                pct = round((count / total_ctx) * 100)
-                col.metric(label, count, f"{pct}%")
+            total_runs = scores["total_queries_run"] or 1
+            recommended = ctx.get("recommended", 0)
+            mentioned = ctx.get("mentioned", 0)
+            warned = ctx.get("warned_against", 0)
+            not_mentioned = ctx.get("not_mentioned", 0)
+            rec_share = round((recommended / total_runs) * 100)
+            mention_share = round((mentioned / total_runs) * 100)
+
+            st.subheader("📊 Brand Visibility Breakdown")
+            st.caption(
+                "**Recommendation Share** = actively named as a top pick. "
+                "**Mention Share** = casually listed. "
+                "Recommendation Share is the most valuable metric."
+            )
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("🏆 Recommendation Share", f"{rec_share}%",
+                      f"{recommended}/{total_runs} prompts",
+                      help="Brand actively recommended as top pick")
+            m2.metric("🔵 Mention Share", f"{mention_share}%",
+                      f"{mentioned}/{total_runs} prompts",
+                      help="Brand mentioned but not as top pick")
+            m3.metric("🔴 Warned Against", warned,
+                      f"{round((warned/total_runs)*100)}%",
+                      help="Brand mentioned with caution")
+            m4.metric("⚪ Not Mentioned", not_mentioned,
+                      f"{round((not_mentioned/total_runs)*100)}%",
+                      help="Brand did not appear")
+            if rec_share > 0:
+                st.success(f"✅ Your brand is actively recommended in {rec_share}% of AI responses.")
+            elif mention_share > 0:
+                st.info(f"ℹ️ Your brand appears in {mention_share}% of responses but is not the top recommendation.")
+            else:
+                st.warning("⚠️ Your brand has 0% AI visibility across all prompts.")
 
             # ── Visibility per model table ────────────────────────────────
             st.subheader("Visibility % by AI Model")
