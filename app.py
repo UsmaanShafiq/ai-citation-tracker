@@ -235,9 +235,18 @@ def ai_generate_topics(brand_data: dict) -> list:
     # Ask the AI to deeply understand the brand before generating topics.
     # This is model-agnostic - works with GPT, Gemini, Claude, Groq, or any future model.
     # The intelligence layer removes the need for keyword rules and mechanical filters.
+    # Include buyer insights from Step 1.5 if available
+    buyer_insights = brand_data.get("_buyer_insights", [])
+    buyer_insights_text = ""
+    if buyer_insights:
+        buyer_insights_text = "\nDIRECT BUYER INSIGHTS (answers from the brand owner - highest priority):\n"
+        for qa in buyer_insights:
+            buyer_insights_text += f"Q: {qa['question']}\nA: {qa['answer']}\n\n"
+
     intelligence_prompt = (
         "You are an AI visibility analyst. Read the brand information below carefully.\n\n"
-        + raw_context + "\n"
+        + raw_context
+        + buyer_insights_text + "\n"
         "Based on this, answer these 4 questions in JSON format:\n"
         "{\n"
         "  \"what_they_offer\": \"One sentence describing exactly what this brand offers in plain language\",\n"
@@ -890,14 +899,17 @@ with st.sidebar:
 
 step_names = ["Brand Details", "Topics", "Prompts", "Run & Results"]
 cols = st.columns(4)
+_cur_step = st.session_state.step
+# Map step "1b" to position 1.5 for the indicator
+_step_num = 1.5 if _cur_step == "1b" else (int(_cur_step) if isinstance(_cur_step, int) else 1)
 for i, (col, name) in enumerate(zip(cols, step_names), 1):
     with col:
-        if i < st.session_state.step:
+        if i < _step_num:
             st.success(f"✓ {name}")
-        elif i == st.session_state.step:
+        elif i == int(_step_num):
             st.info(f"▶ {name}")
         else:
-            st.caption(f"{i}. {name}")
+            st.caption(f"{i}.  {name}")
 
 st.divider()
 
@@ -1016,6 +1028,146 @@ if st.session_state.step == 1:
                         del st.session_state[key]
                 # Force website re-fetch since domain may have changed
                 st.session_state.brand_data.pop("_website_text", None)
+            st.session_state.step = "1b"
+            st.rerun()
+
+# =============================================================================
+# STEP 1B: SMART QUESTIONS (AI-generated based on brand)
+# =============================================================================
+
+elif st.session_state.step == "1b":
+    bd = st.session_state.brand_data
+
+    # Generate smart questions if not done yet
+    if "_smart_questions" not in st.session_state:
+        with st.spinner("🧠 Analyzing your brand to generate personalized questions..."):
+            q_context = (
+                f"Brand: {bd.get('name')}\n"
+                f"Domain: {bd.get('domain')}\n"
+                f"Business type: {bd.get('business_type')}\n"
+                f"What they offer: {', '.join(bd.get('products', []))}\n"
+                f"Who they serve: {', '.join(bd.get('customers', []))}\n"
+                f"Key differentiators: {', '.join(bd.get('key_features', []))}\n"
+                f"Competitors: {', '.join(bd.get('competitors', []))}\n"
+            )
+            q_prompt = (
+                "You are an AI visibility consultant helping a brand track how they appear in AI search results.\n\n"
+                "Read this brand profile carefully:\n" + q_context + "\n"
+                "Generate 4 short, specific, conversational questions to ask the brand owner.\n"
+                "These questions will help you understand exactly what their buyers search for in ChatGPT or Perplexity.\n\n"
+                "Rules for questions:\n"
+                "- Each question must be specific to THIS brand - not generic\n"
+                "- Questions should feel like a smart consultant asking, not a boring form\n"
+                "- Focus on: buyer search behavior, pain points before buying, what makes them choose this brand\n"
+                "- Keep each question under 15 words\n"
+                "- Do NOT ask about things already in the form data above\n\n"
+                "Example style (do not copy these, make them specific to the brand above):\n"
+                "- \'When a startup founder realizes they need you, what do they Google first?\'\n"
+                "- \'What does your customer try before they find you?\'\n\n"
+                "Return ONLY a JSON array of exactly 4 question strings. No markdown."
+            )
+            try:
+                raw_q = _call_ai_for_json(q_prompt)
+                questions = _parse_json_list(raw_q)
+                questions = [q for q in questions if isinstance(q, str) and q.strip()][:4]
+                if len(questions) < 4:
+                    questions += [
+                        f"What would your ideal customer type into ChatGPT when they are ready to choose a solution like {bd.get('name')}?",
+                        "What problem does your customer have right before they find you?",
+                        "Which competitor do customers usually settle for if they can't find you?",
+                        "Describe your best customer in one sentence — their role and what they need."
+                    ][len(questions):4]
+            except Exception:
+                questions = [
+                    f"What would your ideal customer type into ChatGPT when they are ready to choose a solution like {bd.get('name')}?",
+                    "What problem does your customer have right before they find you?",
+                    "Which competitor do customers usually settle for if they can't find you?",
+                    "Describe your best customer — their role, company type, and what they need."
+                ]
+            st.session_state["_smart_questions"] = questions
+
+    questions = st.session_state.get("_smart_questions", [])
+
+    # ── Visual design ─────────────────────────────────────────────────────────
+    st.markdown("""
+        <div style='background: linear-gradient(135deg, #1e3a5f 0%, #0f2340 100%);
+                    border-radius: 16px; padding: 28px 32px; margin-bottom: 24px;
+                    border: 1px solid #2563eb33;'>
+            <div style='font-size: 13px; color: #7dd3fc; font-weight: 600;
+                        letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px;'>
+                Step 1.5 of 4
+            </div>
+            <div style='font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 8px;'>
+                Help us think like your buyer 🧠
+            </div>
+            <div style='font-size: 15px; color: #94a3b8; line-height: 1.6;'>
+                We generated these questions based on your brand. Your answers help us create 
+                more accurate topics and prompts — the kind your actual buyers would type.
+                <br><br>
+                <span style='color: #7dd3fc;'>All questions are optional.</span> 
+                Skip any you are unsure about.
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # ── Questions ─────────────────────────────────────────────────────────────
+    answers = {}
+    icons = ["🔍", "💡", "🏁", "👤"]
+    placeholders = [
+        "e.g. best patent management software for startups...",
+        "e.g. they are manually tracking patents in spreadsheets...",
+        "e.g. they end up using Anaqua but find it too expensive...",
+        "e.g. I am a startup CTO with 5 patents who needs simple tracking..."
+    ]
+
+    for idx, question in enumerate(questions):
+        st.markdown(f"""
+            <div style='background: #0f1f35; border: 1px solid #1e3a5f;
+                        border-left: 3px solid #2563eb; border-radius: 10px;
+                        padding: 16px 20px; margin-bottom: 4px;'>
+                <span style='color: #7dd3fc; font-size: 18px;'>{icons[idx] if idx < len(icons) else "💬"}</span>
+                <span style='color: #e2e8f0; font-size: 15px; font-weight: 500;
+                             margin-left: 10px;'>{question}</span>
+            </div>
+        """, unsafe_allow_html=True)
+        answers[f"q{idx}"] = st.text_area(
+            label=f"q{idx}",
+            key=f"smart_q_{idx}",
+            placeholder=placeholders[idx] if idx < len(placeholders) else "Your answer...",
+            label_visibility="collapsed",
+            height=72
+        )
+
+    # ── Save answers and proceed ──────────────────────────────────────────────
+    st.write("")
+    col_back, col_skip, col_next = st.columns([1, 1, 2])
+
+    with col_back:
+        if st.button("← Back", use_container_width=True):
+            st.session_state.step = 1
+            if "_smart_questions" in st.session_state:
+                del st.session_state["_smart_questions"]
+            st.rerun()
+
+    with col_skip:
+        if st.button("Skip →", use_container_width=True):
+            st.session_state.step = 2
+            st.rerun()
+
+    with col_next:
+        if st.button("Next: Generate Topics →", type="primary", use_container_width=True):
+            # Save Q&A pairs into brand_data for use in topic generation
+            qa_pairs = []
+            for idx, question in enumerate(questions):
+                answer = answers.get(f"q{idx}", "").strip()
+                if answer:
+                    qa_pairs.append({"question": question, "answer": answer})
+            st.session_state.brand_data["_buyer_insights"] = qa_pairs
+            # Clear cached topics so they regenerate with new insights
+            for key in ["topics", "selected_topics", "prompts_by_topic",
+                        "selected_prompts", "all_results", "run_complete"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.session_state.step = 2
             st.rerun()
 
