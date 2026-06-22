@@ -988,15 +988,31 @@ if st.session_state.step == 1:
     )
 
     _btype_options = ["SaaS / Software", "Agency / Service Business", "Ecommerce / DTC Brand",
-                     "Marketplace / Aggregator", "Other / Not Sure"]
-    _btype_default = _saved.get("business_type", "SaaS / Software")
-    _btype_idx = _btype_options.index(_btype_default) if _btype_default in _btype_options else 0
-    business_type = st.selectbox(
+                     "Marketplace / Aggregator", "Training / Education",
+                     "Healthcare / Medical", "Legal / Law Firm", "Financial Services",
+                     "Media / Publishing", "Retail / Physical Store", "Other (type your own)"]
+    _btype_saved = _saved.get("business_type", "SaaS / Software")
+    # If saved value is a custom one not in the list, default to Other
+    _btype_idx = _btype_options.index(_btype_saved) if _btype_saved in _btype_options else len(_btype_options) - 1
+    _btype_selected = st.selectbox(
         "Business Type",
         options=_btype_options,
         index=_btype_idx,
-        help="Controls how competitors are detected"
+        help="Select the closest match or choose Other to type your own"
     )
+    # Show custom input when Other is selected
+    if _btype_selected == "Other (type your own)":
+        _custom_default = _btype_saved if _btype_saved not in _btype_options else ""
+        business_type = st.text_input(
+            "Describe your business type",
+            value=_custom_default,
+            placeholder="e.g. Training / Education, Non-profit, Government, Hardware, SaaS marketplace...",
+            key="custom_business_type"
+        )
+        if not business_type.strip():
+            business_type = "Other"
+    else:
+        business_type = _btype_selected
 
     col3, col4 = st.columns(2)
     _country_options = ["United States", "United Kingdom", "Canada", "Australia",
