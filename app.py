@@ -271,6 +271,8 @@ def ai_generate_topics(brand_data: dict) -> list:
         "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\n"
         "- Do NOT generate how-to, strategy, tips, or educational topics\n"
         "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
+        "- Every topic MUST contain a category anchor word like: agency, agencies, firm, firms, service, services, tool, tools, software, platform, company, companies\\n"
+        "- Use the brand\'s own language from the website content above\\n"
         "- Mix: 2-3 topics based on key differentiators above, rest based on general category search\n"
         "- Vary: direct search, comparison, use-case, feature-specific\n"
         + (f"- For 1 topic, add '{country}' at the end\n" if country and country.lower() not in ["global", "united states", ""] else "") +
@@ -296,7 +298,10 @@ def ai_generate_topics(brand_data: dict) -> list:
         "definition", "what is", "benefits of", "advantages of",
     ]
     # Standalone vague nouns that only work when combined with agency/firm/service
-    vague_standalone = ["providers", "solutions", "platforms", "consultants", "consultancies"]
+    vague_standalone = [
+        "providers", "solutions", "platforms", "consultants", "consultancies",
+        "writing services", "content writing", "writing service"
+    ]
 
     filtered = []
     for t in topics:
@@ -436,7 +441,24 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     brand_lower = brand_name.lower()
     clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
-    result = [topic] + [p for p in clean if p.lower() != topic.lower()]
+
+    # Use 90% word overlap threshold for deduplication
+    # Exact match filtering was removing valid prompts that were slightly different
+    def _too_similar(p, t):
+        p_w = set(p.lower().split())
+        t_w = set(t.lower().split())
+        if not t_w:
+            return False
+        return len(p_w & t_w) / len(t_w) > 0.9
+
+    result = [topic] + [p for p in clean if not _too_similar(p, topic)]
+
+    # For non-US countries, add location variant
+    if country_suffix and len(result) < 6:
+        location_prompt = topic + country_suffix
+        if location_prompt.lower() not in [r.lower() for r in result]:
+            result.append(location_prompt)
+
     return result[:5]
 
 
@@ -859,17 +881,78 @@ elif st.session_state.step == 2:
 
     # Auto-generate if not done yet
     if not st.session_state.topics:
-        with st.spinner("Visiting brand website for context..."):
-            # Fetch website once and cache in brand_data to reuse in prompt generation
+
+        # ── Step 1: Fetch website ─────────────────────────────────────────────
+        with st.spinner("🌐 Fetching your website..."):
             if "_website_text" not in st.session_state.brand_data:
                 website_text = fetch_brand_website(bd.get("domain", ""))
                 st.session_state.brand_data["_website_text"] = website_text
-                if website_text:
-                    st.success(f"Website read successfully ({len(website_text)} chars). Generating topics...")
-                else:
-                    st.warning("Could not read website. Using form data only.")
+            else:
+                website_text = st.session_state.brand_data.get("_website_text", "")
 
-        with st.spinner("Generating topics from your brand profile..."):
+        # ── Step 2: Show what was understood from the website ─────────────────
+        if website_text:
+            # Use AI to summarize what was understood about the brand from the website
+            understanding_prompt = (
+                "You just read the homepage of a brand. Based on the content below, "
+                "write a SHORT 3-4 sentence summary explaining:\n"
+                "1. What this brand does\n"
+                "2. Who their customers are\n"
+                "3. What makes them different\n\n"
+                "Be specific and factual. Only use what is actually on the page.\n"
+                "Do not invent anything. Write in plain English.\n\n"
+                "Website content:\n" + website_text[:3000]
+            )
+            with st.spinner("🧠 Reading and understanding your website..."):
+                try:
+                    brand_understanding = _call_ai_for_json(
+                        understanding_prompt + "\n\nRespond with plain text only, no JSON, no bullet points."
+                    )
+                except Exception:
+                    brand_understanding = ""
+
+            st.success("✅ Website fetched successfully")
+            with st.expander("📋 What we understood from your website", expanded=True):
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.markdown("**Website Content Summary:**")
+                    if brand_understanding:
+                        st.write(brand_understanding)
+                    else:
+                        st.write(website_text[:400] + "...")
+
+                with col2:
+                    st.markdown("**What we will use to generate topics:**")
+                    st.markdown(f"🌐 **Website:** {bd.get('domain', '')}")
+                    if bd.get("products"):
+                        st.markdown(f"📦 **Products/Services:** {', '.join(bd['products'][:3])}{'...' if len(bd.get('products',[])) > 3 else ''}")
+                    if bd.get("customers"):
+                        st.markdown(f"👥 **Target customers:** {', '.join(bd['customers'][:3])}{'...' if len(bd.get('customers',[])) > 3 else ''}")
+                    if bd.get("key_features"):
+                        st.markdown(f"⭐ **Key differentiators:** {', '.join(bd['key_features'][:3])}{'...' if len(bd.get('key_features',[])) > 3 else ''}")
+                    if bd.get("competitors"):
+                        st.markdown(f"🏁 **Competitors:** {', '.join(bd['competitors'][:3])}{'...' if len(bd.get('competitors',[])) > 3 else ''}")
+                    st.markdown(f"🌍 **Country:** {bd.get('country', 'United States')}")
+
+                st.info("Topics will now be generated based on your website content and the information above.")
+        else:
+            st.warning(
+                "⚠️ Could not read your website automatically. "
+                "Topics will be generated from your form data only. "
+                "Check that your domain is correct and publicly accessible."
+            )
+            with st.expander("📋 What we will use to generate topics", expanded=True):
+                if bd.get("products"):
+                    st.markdown(f"📦 **Products/Services:** {', '.join(bd['products'])}")
+                if bd.get("customers"):
+                    st.markdown(f"👥 **Target customers:** {', '.join(bd['customers'])}")
+                if bd.get("key_features"):
+                    st.markdown(f"⭐ **Key differentiators:** {', '.join(bd['key_features'])}")
+                if bd.get("competitors"):
+                    st.markdown(f"🏁 **Competitors:** {', '.join(bd['competitors'])}")
+
+        # ── Step 3: Generate topics ───────────────────────────────────────────
+        with st.spinner("🔍 Generating topics based on your brand profile..."):
             try:
                 generated = ai_generate_topics(st.session_state.brand_data)
                 st.session_state.topics = generated
@@ -968,11 +1051,16 @@ elif st.session_state.step == 2:
 elif st.session_state.step == 3:
     bd = st.session_state.brand_data
     st.subheader("Step 3: Review Prompts")
-    st.caption("These prompts will be sent to each AI model to check if your brand is mentioned. 5 prompts per topic.")
+    st.caption("These prompts will be sent to each AI model to check if your brand is mentioned.")
 
     total_topics = len(st.session_state.selected_topics)
-    total_prompts = total_topics * 5
-    st.info(f"**{total_topics} topics x 5 prompts = {total_prompts} total prompts** per AI model")
+    # Calculate actual prompt count from selected prompts, not assumed 5 per topic
+    total_prompts = sum(
+        len(st.session_state.selected_prompts.get(t, []))
+        for t in st.session_state.selected_topics
+    )
+    avg_per_topic = round(total_prompts / total_topics, 1) if total_topics > 0 else 0
+    st.info(f"**{total_topics} topics × {avg_per_topic} avg prompts = {total_prompts} total prompts** per AI model")
 
     # Generate prompts for each selected topic if not done
     for topic in st.session_state.selected_topics:
