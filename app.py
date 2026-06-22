@@ -199,8 +199,12 @@ def fetch_brand_website(domain: str) -> str:
 
 def ai_generate_topics(brand_data: dict) -> list:
     """
-    Generates 5 search topics that would cause an AI to name specific brands.
-    Dynamically adapts to any business type - no hardcoding.
+    Two-stage topic generation:
+    Stage 1 - Brand Intelligence: understand the brand deeply using available AI
+    Stage 2 - Topic Generation: generate realistic buyer search topics from that intelligence
+
+    Fully model-agnostic - uses _call_ai_for_json which works with any AI model.
+    When new models are added to the system, this function benefits automatically.
     """
     business_type = brand_data.get("business_type", "")
     products = ", ".join(brand_data.get("products", []))
@@ -210,77 +214,103 @@ def ai_generate_topics(brand_data: dict) -> list:
     brand_name = brand_data["name"]
     country = brand_data.get("country", "")
 
-    # Derive what kind of solution this brand is - purely from business_type field
-    # No hardcoding - just reading what the user told us
-    bt_lower = business_type.lower()
-    if any(w in bt_lower for w in ["agency", "service", "studio", "consultancy"]):
-        solution_type = "agency, service provider, or consultancy"
-    elif any(w in bt_lower for w in ["saas", "software"]):
-        solution_type = "software, tool, or platform"
-    elif any(w in bt_lower for w in ["ecommerce", "dtc", "brand"]):
-        solution_type = "platform, store, or marketplace"
-    elif any(w in bt_lower for w in ["marketplace", "aggregator"]):
-        solution_type = "marketplace or platform"
-    else:
-        solution_type = "product or service"
-
-    # Country context
-    country_note = f"User location: {country}\n" if country and country.lower() != "global" else ""
-
-    # Website content
+    # Website content - primary source of truth
     website_text = brand_data.get("_website_text", "")
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    context = ""
+    # Build raw context from all available sources
+    raw_context = ""
     if website_text:
-        context = "Website content (use as primary context):\n" + website_text[:2000] + "\n\n"
-    context += (
-        "Brand: " + brand_name + "\n"
+        raw_context += "WEBSITE CONTENT:\n" + website_text[:2000] + "\n\n"
+    raw_context += (
+        "Brand name: " + brand_name + "\n"
         "Business type: " + business_type + "\n"
         "What they offer: " + products + "\n"
         "Who they serve: " + customers + "\n"
         "Key differentiators: " + key_features + "\n"
-        + country_note
     )
 
-    # Extract individual key features to use as topic angles
-    key_features_list = brand_data.get("key_features", [])
+    # ── STAGE 1: Brand Intelligence ───────────────────────────────────────────
+    # Ask the AI to deeply understand the brand before generating topics.
+    # This is model-agnostic - works with GPT, Gemini, Claude, Groq, or any future model.
+    # The intelligence layer removes the need for keyword rules and mechanical filters.
+    intelligence_prompt = (
+        "You are an AI visibility analyst. Read the brand information below carefully.\n\n"
+        + raw_context + "\n"
+        "Based on this, answer these 4 questions in JSON format:\n"
+        "{\n"
+        "  \"what_they_offer\": \"One sentence describing exactly what this brand offers in plain language\",\n"
+        "  \"exact_buyer\": \"One sentence describing the specific person who needs this, their role and situation\",\n"
+        "  \"buyer_search_intent\": \"What would this buyer type into an AI tool when they are ready to find and choose a solution like this one?\",\n"
+        "  \"unique_angle\": \"What makes this brand stand out from obvious alternatives in 1 sentence?\"\n"
+        "}\n\n"
+        "Be specific to THIS brand. Do not use generic category labels.\n"
+        "For example, not \'patent software\' but \'patent management software for startup founders who want to file without expensive counsel\'\n"
+        "Respond ONLY with valid JSON. No explanation, no markdown."
+    )
 
-    # Build a features-driven topic hint
-    # This ensures topics reflect what makes THIS brand unique
-    # not just generic category searches
-    feature_hint = ""
-    if key_features_list:
-        feature_hint = (
-            "\nIMPORTANT - Use these key differentiators to create feature-specific topics:\n"
-            + "\n".join([f"- {f}" for f in key_features_list[:6]])
-            + "\nAt least 2-3 topics should be based on these specific features/differentiators.\n"
-            "For example if a feature is 'semantic search using AI', generate a topic like "
-            "'semantic AI patent search tools' not just 'patent search tools'.\n"
+    brand_intelligence = {}
+    try:
+        intel_raw = _call_ai_for_json(intelligence_prompt)
+        parsed_intel = _parse_json_list(intel_raw)
+        if isinstance(parsed_intel, list) and len(parsed_intel) > 0:
+            brand_intelligence = parsed_intel[0] if isinstance(parsed_intel[0], dict) else {}
+        elif isinstance(intel_raw, str):
+            import json as _json
+            try:
+                brand_intelligence = _json.loads(intel_raw)
+            except Exception:
+                brand_intelligence = {}
+    except Exception:
+        brand_intelligence = {}
+
+    # Build enriched context from brand intelligence
+    if brand_intelligence:
+        enriched_context = (
+            "BRAND INTELLIGENCE (AI-generated understanding of this brand):\n"
+            + f"What they offer: {brand_intelligence.get('what_they_offer', '')}\n"
+            + f"Exact buyer: {brand_intelligence.get('exact_buyer', '')}\n"
+            + f"Buyer search intent: {brand_intelligence.get('buyer_search_intent', '')}\n"
+            + f"Unique angle: {brand_intelligence.get('unique_angle', '')}\n\n"
+            + "RAW BRAND DATA (supplement only):\n"
+            + raw_context
         )
+    else:
+        enriched_context = raw_context
 
-    prompt = (
-        "You track brand visibility in AI search tools like ChatGPT and Perplexity.\n\n"
-        "Based on the brand below, generate 7 search topics that a potential BUYER "
-        "would type when they want an AI to recommend a specific " + solution_type + ".\n\n"
-        + context
-        + feature_hint + "\n"
-        "RULES:\n"
-        "- Every topic must be something where an AI would respond by naming specific brands\n"
-        "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\n"
-        "- Do NOT generate how-to, strategy, tips, or educational topics\n"
-        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
-        "- Every topic MUST contain a category anchor word like: agency, agencies, firm, firms, service, services, tool, tools, software, platform, company, companies\\n"
-        "- Use the brand\'s own language from the website content above\\n"
-        "- Mix: 2-3 topics based on key differentiators above, rest based on general category search\n"
-        "- Vary: direct search, comparison, use-case, feature-specific\n"
-        + (f"- For 1 topic, add '{country}' at the end\n" if country and country.lower() not in ["global", "united states", ""] else "") +
-        "\nGenerate exactly 7 short topics (3-8 words each).\n"
-        "Respond ONLY with a JSON array of 7 strings. No explanation, no markdown."
+    # Country context
+    country_note = f"User location: {country}\n" if country and country.lower() != "global" else ""
+    country_topic_note = (
+        f"- For 1 topic, add '{country}' to make it location-specific\n"
+        if country and country.lower() not in ["global", "united states", ""] else ""
     )
 
-    raw = _call_ai_for_json(prompt)
+    # ── STAGE 2: Topic Generation from Brand Intelligence ─────────────────────
+    # Topics are generated from genuine understanding, not keyword rules.
+    # Works for any brand type: software, agency, service, marketplace, etc.
+    topic_prompt = (
+        "You track brand visibility across AI tools like ChatGPT, Perplexity, Claude, and Gemini.\n\n"
+        "Based on the brand intelligence below, generate 7 search topics that the EXACT BUYER "
+        "described would type into an AI tool when they are ready to find and choose a solution.\n\n"
+        + enriched_context
+        + country_note + "\n"
+        "RULES:\n"
+        "- Topics must be what the EXACT BUYER would search - not generic category searches\n"
+        "- Every topic must cause an AI to respond by naming specific brands or providers\n"
+        "- Do NOT generate informational, educational, or how-to topics\n"
+        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
+        "- Every topic must contain a category word: agency, agencies, firm, service, services, "
+        "tool, tools, software, platform, company, companies, provider, providers\n"
+        "- Use specific language from the brand intelligence above - not generic category labels\n"
+        "- Mix: 3 topics based on unique features/differentiators, 4 based on general buyer intent\n"
+        + country_topic_note +
+        "\nFor each topic also provide one sentence of buyer intent (why they search this).\n"
+        "Respond ONLY with a JSON array of 7 objects: "
+        "[{\"topic\": \"...\" , \"intent\": \"...\"}, ...]\n"
+        "No markdown, no explanation."
+    )
+    raw = _call_ai_for_json(topic_prompt)
     parsed_raw = _parse_json_list(raw)
     brand_lower = brand_name.lower()
     topics = []
