@@ -903,16 +903,26 @@ with st.sidebar:
 
     st.divider()
     stats = get_usage_stats()
-    any_usage = any(stats[t]["calls"] > 0 for t in stats)
+    any_usage = any(isinstance(stats[t], dict) and stats[t].get("calls", 0) > 0 for t in stats if t != "web_search_errors")
     if any_usage:
         st.subheader("Session Usage")
         for tool_name in selected_tools:
-            if tool_name in stats and stats[tool_name]["calls"] > 0:
+            if tool_name in stats and isinstance(stats[tool_name], dict) and stats[tool_name].get("calls", 0) > 0:
                 s = stats[tool_name]
                 st.markdown(f"**{tool_name}**: {s['calls']} calls, ~{s['estimated_tokens']} tokens")
         if st.button("Reset Stats"):
             reset_usage_stats()
             st.rerun()
+
+    # Show web search errors if any — helps diagnose if web search is silently failing
+    web_errs = stats.get("web_search_errors", [])
+    if web_errs:
+        st.divider()
+        st.warning("⚠️ Web Search Issues Detected")
+        st.caption("Web search fell back to training data for some queries.")
+        with st.expander("View web search errors"):
+            for err in web_errs[-5:]:
+                st.code(err, language=None)
 
     st.divider()
     if st.button("🔄 Start Over", use_container_width=True):
@@ -1624,7 +1634,7 @@ elif st.session_state.step == 4:
                 st.warning("All tools rate-limited. Stopping early.")
                 break
 
-            tool_responses = run_selected_tools(q["query"], active_tools)
+            tool_responses = run_selected_tools(q["query"], active_tools, country=bd.get("country", ""))
 
             for tool_name, raw_response in tool_responses.items():
                 # Handle both dict format (web search tools) and plain string
@@ -1685,9 +1695,13 @@ elif st.session_state.step == 4:
                 feed_lines = []
                 for log in live_log[-8:]:
                     icon = "✅" if log["detected"] else "⚪"
-                    web_tag = " 🌐" if log.get("web") else ""
-                    src_tag = f" ({log['sources']} sources)" if log.get("sources") else ""
-                    feed_lines.append(f"{icon} **{log['model']}**{web_tag}{src_tag} — {log['prompt']}")
+                    if log.get("web") and log.get("sources", 0) > 0:
+                        web_tag = f" 🌐 ({log['sources']} sources)"
+                    elif log.get("web"):
+                        web_tag = " 🌐"
+                    else:
+                        web_tag = " 📚"  # training data only
+                    feed_lines.append(f"{icon} **{log['model']}**{web_tag} — {log['prompt']}")
                 live_feed.markdown("**Live Results:**\n" + "\n".join(feed_lines))
                 call_count += 1
                 progress_bar.progress(min(call_count / total_calls, 1.0))

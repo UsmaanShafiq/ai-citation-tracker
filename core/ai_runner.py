@@ -196,66 +196,121 @@ def run_on_gemini(query: str) -> str:
         return f"ERROR: {str(e)}"
 
 
-def run_on_chatgpt(query: str) -> dict:
+def run_on_chatgpt(query: str, country: str = "") -> dict:
     """
     Runs query through GPT-4o with live web search enabled.
     Returns: {"text": str, "sources": list, "web_searched": bool}
     This matches the ChatGPT web interface behaviour - grounded in live web results.
     Universal dict format - future tools (Perplexity, Gemini, Claude) return same structure.
+    country: optional ISO country code or name for geographic relevance (e.g. "US", "India")
     """
     try:
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
         # Use OpenAI Responses API with web_search_preview tool
-        # This is what makes results match what users see in ChatGPT web interface
+        # This matches what users see in ChatGPT web interface
+        web_search_error = None
+
+        # ── Method 1: Responses API with web_search tool (recommended) ────────
         try:
             response = client.responses.create(
                 model="gpt-4o",
-                tools=[{"type": "web_search_preview"}],
+                tools=[{"type": "web_search"}],
                 input=query,
-                max_output_tokens=800
+                max_output_tokens=1000
             )
 
             result_text = ""
             sources = []
 
-            for item in response.output:
-                if hasattr(item, "type"):
-                    if item.type == "message":
+            # output_text is the most direct way to get response text
+            if hasattr(response, "output_text") and response.output_text:
+                result_text = response.output_text.strip()
+
+            # Parse output items for source citations
+            if hasattr(response, "output"):
+                for item in response.output:
+                    item_type = getattr(item, "type", "")
+                    if item_type == "message":
                         for block in item.content:
-                            if hasattr(block, "text"):
+                            if not result_text and hasattr(block, "text"):
                                 result_text = block.text.strip()
                             if hasattr(block, "annotations"):
                                 for ann in block.annotations:
-                                    if hasattr(ann, "url"):
-                                        domain = ann.url.split("/")[2] if "/" in ann.url else ann.url
+                                    url = getattr(ann, "url", "")
+                                    if url:
+                                        parts = url.split("/")
+                                        domain = parts[2] if len(parts) > 2 else url
                                         sources.append({
                                             "title": getattr(ann, "title", domain),
-                                            "url": ann.url,
+                                            "url": url,
                                             "domain": domain
                                         })
 
-            # Fallback if text empty
-            if not result_text and hasattr(response, "output_text"):
-                result_text = (response.output_text or "").strip()
+            if result_text:
+                track_usage("ChatGPT", result_text)
+                return {"text": result_text, "sources": sources, "web_searched": True}
+            else:
+                web_search_error = "Responses API returned empty text"
 
-            track_usage("ChatGPT", result_text)
-            return {"text": result_text, "sources": sources, "web_searched": True}
+        except Exception as e1:
+            web_search_error = f"Responses API: {str(e1)}"
 
-        except Exception:
-            # Fallback to standard completion if web search API unavailable
-            fallback = client.chat.completions.create(
-                model="gpt-4o",
+        # ── Method 2: Chat Completions with search-preview model ──────────────
+        try:
+            search_response = client.chat.completions.create(
+                model="gpt-4o-search-preview",
+                web_search_options={},
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
                     {"role": "user", "content": query}
                 ],
-                max_tokens=800
+                max_tokens=1000
             )
-            result = fallback.choices[0].message.content.strip()
-            track_usage("ChatGPT", result)
-            return {"text": result, "sources": [], "web_searched": False}
+            result_text = search_response.choices[0].message.content.strip()
+
+            # Extract citations from annotations if available
+            sources = []
+            msg = search_response.choices[0].message
+            if hasattr(msg, "annotations"):
+                for ann in (msg.annotations or []):
+                    url = getattr(ann, "url", "")
+                    if url:
+                        parts = url.split("/")
+                        domain = parts[2] if len(parts) > 2 else url
+                        sources.append({
+                            "title": getattr(ann, "title", domain),
+                            "url": url,
+                            "domain": domain
+                        })
+
+            if result_text:
+                track_usage("ChatGPT", result_text)
+                return {"text": result_text, "sources": sources, "web_searched": True}
+            else:
+                web_search_error += " | Search-preview: empty response"
+
+        except Exception as e2:
+            web_search_error = (web_search_error or "") + f" | Search-preview: {str(e2)}"
+
+        # Fallback to standard completion
+        # Store the error so app.py can surface it to the user
+        if web_search_error:
+            if "web_search_errors" not in usage_stats:
+                usage_stats["web_search_errors"] = []
+            usage_stats["web_search_errors"].append(str(web_search_error)[:200])
+
+        fallback = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
+                {"role": "user", "content": query}
+            ],
+            max_tokens=1000
+        )
+        result = fallback.choices[0].message.content.strip()
+        track_usage("ChatGPT", result)
+        return {"text": result, "sources": [], "web_searched": False, "fallback_reason": web_search_error or ""}
 
     except Exception as e:
         track_usage("ChatGPT", "", is_error=True)
@@ -346,19 +401,26 @@ ALL_TOOLS = {
 }
 
 
-def run_selected_tools(query: str, selected_tools: list) -> dict:
+def run_selected_tools(query: str, selected_tools: list, country: str = "") -> dict:
     """
     Runs query through only the selected tools.
     Returns dict of {tool_name: result} where result is either:
     - {"text": str, "sources": list, "web_searched": bool} for tools with web search (ChatGPT)
     - A plain string for tools without web search (Perplexity, Gemini, Claude)
     app.py handles both formats transparently.
+    country: passed to tools that support geographic relevance (ChatGPT web search)
     """
     results = {}
     for tool_name in selected_tools:
         if tool_name in ALL_TOOLS:
             tool_fn = ALL_TOOLS[tool_name]["fn"]
-            results[tool_name] = tool_fn(query)
+            # Pass country to tools that support it
+            import inspect
+            fn_params = inspect.signature(tool_fn).parameters
+            if "country" in fn_params:
+                results[tool_name] = tool_fn(query, country=country)
+            else:
+                results[tool_name] = tool_fn(query)
             time.sleep(2)
     return results
 
