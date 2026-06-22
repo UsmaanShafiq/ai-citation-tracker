@@ -1938,33 +1938,46 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Web sources — displayed like ChatGPT source citations
+                                # Web sources — show count outside expander, full list inside
                                 linked = r.get("linked_sites", [])
                                 web_searched_r = r.get("web_searched", False)
+                                src_count = len(linked)
 
-                                if web_searched_r and linked:
-                                    st.markdown("**🌐 Web Sources Used**")
-                                    st.caption("Response grounded in live web search — same as ChatGPT web interface.")
-                                    for s in linked[:8]:
-                                        title = s.get("title") or s.get("domain", "Source")
-                                        url = s.get("url", "")
-                                        domain = s.get("domain", "")
-                                        if url:
-                                            st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
+                                # Source count badge — always visible without clicking
+                                if web_searched_r and src_count > 0:
+                                    st.markdown(
+                                        f"🌐 **Web searched** &nbsp;·&nbsp; "
+                                        f"📎 **{src_count} source{'s' if src_count != 1 else ''} used**",
+                                    )
                                 elif web_searched_r:
-                                    st.caption("🌐 Web search was used for this response.")
-                                elif linked:
-                                    st.caption("**Linked Sites:**")
-                                    for s in linked[:5]:
-                                        url = s.get("url", "")
-                                        domain = s.get("domain", url)
-                                        if url:
-                                            st.markdown(f"&nbsp;&nbsp;🔗 [{domain}]({url})")
+                                    st.markdown("🌐 **Web searched** &nbsp;·&nbsp; no sources extracted")
 
-                                # AI Response - highlighted brand mentions
+                                # AI Response expander — sources shown inside
                                 response = r.get("response", "")
-                                exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
+                                if web_searched_r and src_count > 0:
+                                    exp_label = (f"✅ View AI Response + {src_count} sources (brand found)"
+                                                 if mentioned else f"View AI Response + {src_count} sources")
+                                else:
+                                    exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
                                 with st.expander(exp_label):
+                                    # Sources inside expander
+                                    if web_searched_r and linked:
+                                        st.markdown("**🌐 Web Sources Used**")
+                                        st.caption("Response grounded in live web search — same as ChatGPT web interface.")
+                                        for s in linked[:8]:
+                                            title = s.get("title") or s.get("domain", "Source")
+                                            url = s.get("url", "")
+                                            domain = s.get("domain", "")
+                                            if url:
+                                                st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
+                                        st.divider()
+                                    elif linked:
+                                        for s in linked[:5]:
+                                            url = s.get("url", "")
+                                            domain = s.get("domain", url)
+                                            if url:
+                                                st.markdown(f"&nbsp;&nbsp;🔗 [{domain}]({url})")
+                                        st.divider()
                                     if response:
                                         # Highlight all variants of brand name
                                         import re as _re
