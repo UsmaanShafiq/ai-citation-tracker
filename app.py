@@ -814,7 +814,8 @@ if st.session_state.step == 1:
             st.error("⚠️ Competitors are required. Add at least one direct competitor for accurate comparison prompts and benchmarking.")
         else:
             # Check if brand data has changed from previous session
-            prev_data = st.session_state.get("brand_data", {})
+            # Ensure prev_data is always a dict even if session state has None
+            prev_data = st.session_state.get("brand_data") or {}
             new_data = {
                 "name": brand_name.strip(),
                 "domain": brand_domain.strip(),
