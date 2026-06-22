@@ -397,8 +397,10 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     # Country as system context not in prompt text
     country_system = ""
-    if country and country.lower() not in ["global", ""]:
+    country_suffix = ""
+    if country and country.lower() not in ["global", "united states", ""]:
         country_system = f"\nUser location context: {country}. Tailor relevance to this market."
+        country_suffix = f" {country}"
 
     prompt = (
         "You generate search prompts for AI visibility tracking.\n\n"
@@ -911,45 +913,76 @@ elif st.session_state.step == 2:
                 except Exception:
                     brand_understanding = ""
 
-            st.success("✅ Website fetched successfully")
-            with st.expander("📋 What we understood from your website", expanded=True):
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    st.markdown("**Website Content Summary:**")
-                    if brand_understanding:
-                        st.write(brand_understanding)
-                    else:
-                        st.write(website_text[:400] + "...")
+            st.success(f"✅ Website fetched successfully from {bd.get('domain', '')}")
+            with st.expander("📋 Brand Intelligence Summary", expanded=True):
 
-                with col2:
-                    st.markdown("**What we will use to generate topics:**")
-                    st.markdown(f"🌐 **Website:** {bd.get('domain', '')}")
+                # ── Section 1: From Website ───────────────────────────────
+                st.markdown("### 🌐 From Your Website")
+                st.caption(f"Fetched from: {bd.get('domain', '')}")
+                if brand_understanding:
+                    st.info(brand_understanding)
+                else:
+                    st.info(website_text[:400] + "...")
+
+                st.divider()
+
+                # ── Section 2: From Form ──────────────────────────────────
+                st.markdown("### 📝 From Your Form")
+                st.caption("This is what you entered manually in Step 1.")
+
+                form_cols = st.columns(2)
+                with form_cols[0]:
                     if bd.get("products"):
-                        st.markdown(f"📦 **Products/Services:** {', '.join(bd['products'][:3])}{'...' if len(bd.get('products',[])) > 3 else ''}")
+                        st.markdown("**📦 Products / Services**")
+                        for p in bd["products"]:
+                            st.markdown(f"- {p}")
                     if bd.get("customers"):
-                        st.markdown(f"👥 **Target customers:** {', '.join(bd['customers'][:3])}{'...' if len(bd.get('customers',[])) > 3 else ''}")
+                        st.markdown("**👥 Target Customers**")
+                        for c in bd["customers"]:
+                            st.markdown(f"- {c}")
+                with form_cols[1]:
                     if bd.get("key_features"):
-                        st.markdown(f"⭐ **Key differentiators:** {', '.join(bd['key_features'][:3])}{'...' if len(bd.get('key_features',[])) > 3 else ''}")
+                        st.markdown("**⭐ Key Differentiators**")
+                        for f in bd["key_features"]:
+                            st.markdown(f"- {f}")
                     if bd.get("competitors"):
-                        st.markdown(f"🏁 **Competitors:** {', '.join(bd['competitors'][:3])}{'...' if len(bd.get('competitors',[])) > 3 else ''}")
-                    st.markdown(f"🌍 **Country:** {bd.get('country', 'United States')}")
+                        st.markdown("**🏁 Direct Competitors**")
+                        for comp in bd["competitors"]:
+                            st.markdown(f"- {comp}")
+                    st.markdown(f"**🌍 Country:** {bd.get('country', 'United States')}")
+                    st.markdown(f"**🏢 Business Type:** {bd.get('business_type', '')}")
 
-                st.info("Topics will now be generated based on your website content and the information above.")
+                st.divider()
+                st.success("✅ Topics will be generated using BOTH your website content and your form data.")
         else:
             st.warning(
                 "⚠️ Could not read your website automatically. "
                 "Topics will be generated from your form data only. "
                 "Check that your domain is correct and publicly accessible."
             )
-            with st.expander("📋 What we will use to generate topics", expanded=True):
-                if bd.get("products"):
-                    st.markdown(f"📦 **Products/Services:** {', '.join(bd['products'])}")
-                if bd.get("customers"):
-                    st.markdown(f"👥 **Target customers:** {', '.join(bd['customers'])}")
-                if bd.get("key_features"):
-                    st.markdown(f"⭐ **Key differentiators:** {', '.join(bd['key_features'])}")
-                if bd.get("competitors"):
-                    st.markdown(f"🏁 **Competitors:** {', '.join(bd['competitors'])}")
+            with st.expander("📋 Form Data Being Used", expanded=True):
+                st.markdown("### 📝 From Your Form")
+                st.caption("Website could not be fetched — using form data only.")
+                form_cols2 = st.columns(2)
+                with form_cols2[0]:
+                    if bd.get("products"):
+                        st.markdown("**📦 Products / Services**")
+                        for p in bd["products"]:
+                            st.markdown(f"- {p}")
+                    if bd.get("customers"):
+                        st.markdown("**👥 Target Customers**")
+                        for c in bd["customers"]:
+                            st.markdown(f"- {c}")
+                with form_cols2[1]:
+                    if bd.get("key_features"):
+                        st.markdown("**⭐ Key Differentiators**")
+                        for f in bd["key_features"]:
+                            st.markdown(f"- {f}")
+                    if bd.get("competitors"):
+                        st.markdown("**🏁 Direct Competitors**")
+                        for comp in bd["competitors"]:
+                            st.markdown(f"- {comp}")
+                    st.markdown(f"**🌍 Country:** {bd.get('country', 'United States')}")
 
         # ── Step 3: Generate topics ───────────────────────────────────────────
         with st.spinner("🔍 Generating topics based on your brand profile..."):
