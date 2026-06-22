@@ -417,34 +417,48 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         country_system = f"\nUser location context: {country}. Tailor relevance to this market."
         country_suffix = f" {country}"
 
+    # ── Decide whether comparison is relevant for this topic ────────────────
+    if competitors and comp_for_comparison:
+        if len(comp_for_comparison) >= 2:
+            comparison_line = (f"3. COMPARISON: How does {comp_for_comparison[0]} compare to "
+                               f"{comp_for_comparison[1]} for this use case? "
+                               f"(Only include if naturally relevant to topic)")
+        else:
+            comparison_line = (f"3. ALTERNATIVE: What are the best alternatives to "
+                               f"{comp_for_comparison[0]} for this topic?")
+    else:
+        comparison_line = ("3. SCENARIO: A specific real-world situation where someone needs "
+                           f"a {solution_word} for this topic and asks for a recommendation")
+
     prompt = (
         "You generate search prompts for AI visibility tracking.\n\n"
-        "TOPIC: " + topic + "\n\n"
-        "Your job: write 4 prompts that a REAL PERSON would type into ChatGPT when looking for a " + solution_word + " in this space.\n\n"
-        "Context about the brand\'s niche:\n"
+        "Your job: write 5 prompts a REAL PERSON would type into ChatGPT "
+        "when looking for a " + solution_word + ".\n\n"
+        "Context:\n"
         + context_block
         + competitor_context
         + country_system + "\n\n"
-        "HOW A REAL PERSON TYPES INTO CHATGPT:\n"
-        "- Short and direct: \'best patent search tool\' not \'What is the best patent search tool available??\'\n"
-        "- Conversational: \'what should I use for prior art search\' not \'Which tool is optimal for prior art search??\'\n"
+        "HOW A REAL PERSON TYPES:\n"
+        "- Short and direct: \'best saas content agency\' not \'What is the most optimal agency??\'\n"
+        "- Conversational: \'who should I use for prior art search\'\n"
         "- Natural: no formal structure, no AI-sounding language\n"
-        "- They do NOT mention country names - they just type what they want\n\n"
-        "GENERATE EXACTLY 5 PROMPTS using 5 distinct angles to account for LLM non-determinism.\n"
-        "Different phrasing yields different brand recommendations - we test all 5 angles.\n\n"
-        "TOPIC: " + topic + "\n\n"
-        "1. DIRECT SEARCH: 3-5 words as typed in a search bar. No question mark.\n"
-        "2. NATURAL QUESTION: Casual full question about the topic, like asking a friend.\n"
-        "3. COMPARISON: Compare " + (" vs ".join(comp_for_comparison) if competitors and len(comp_for_comparison) >= 2 else (competitors[0] + " vs alternatives") if competitors else "two known options") + " specifically for this topic.\n"
-        "4. PERSONA: I am a " + persona_role + " at a [company type]. I need [specific need from topic]. Who do you recommend?\n"
-        "5. COLLOQUIAL: Ultra short 2-5 words, informal like a quick text message. Must end with ?\n\n"
+        "- No country names in the prompt text\n\n"
+        "GENERATE EXACTLY 5 PROMPTS for TOPIC: \"" + topic + "\"\n\n"
+        "1. DIRECT SEARCH: 3-5 words exactly as typed in a search bar. No question mark.\n"
+        "2. NATURAL QUESTION: Casual question about this topic. Like asking a friend.\n"
+        + comparison_line + "\n"
+        "4. PERSONA: I am a " + persona_role + " at a [company type]. "
+        "I need [specific need from this topic]. Who do you recommend?\n"
+        "5. COLLOQUIAL: Ultra short 2-5 words, informal like a quick text. Must end with ?\n\n"
         "RULES:\n"
-        "- NEVER mention \"" + brand_name + "\" in any prompt\n"
-        "- Every prompt must force ChatGPT to NAME SPECIFIC BRANDS\n"
-        "- Every prompt must stay on TOPIC: " + topic + "\n"
+        "- NEVER mention \"" + brand_name + "\"\n"
+        "- Every prompt must make ChatGPT NAME SPECIFIC BRANDS\n"
+        "- Every prompt must be about TOPIC: \"" + topic + "\"\n"
+        "- Prompt 3 (comparison/scenario): only include if it naturally fits the topic\n"
         "- No year numbers, no country names\n"
-        "- BAD: bare noun phrases, knowledge questions, personas without a recommendation ask\n"
-        "\nReturn ONLY a JSON array of exactly 5 strings. No markdown, no explanation."
+        "- Persona MUST end with a clear recommendation ask\n"
+        "- BAD: bare noun phrases, knowledge questions, vague statements\n"
+        "\nReturn ONLY a JSON array of exactly 5 strings. No markdown."
     )
 
     import re as _re
