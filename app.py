@@ -1626,7 +1626,17 @@ elif st.session_state.step == 4:
 
             tool_responses = run_selected_tools(q["query"], active_tools)
 
-            for tool_name, response_text in tool_responses.items():
+            for tool_name, raw_response in tool_responses.items():
+                # Handle both dict format (web search tools) and plain string
+                if isinstance(raw_response, dict):
+                    response_text = raw_response.get("text", "")
+                    web_sources = raw_response.get("sources", [])
+                    web_searched = raw_response.get("web_searched", False)
+                else:
+                    response_text = raw_response
+                    web_sources = []
+                    web_searched = False
+
                 if response_text.startswith("ERROR"):
                     clean_error = response_text.split("ERROR:", 1)[-1].strip()
                     if any(x in clean_error.lower() for x in ["429", "rate_limit", "resource_exhausted", "quota"]):
@@ -1648,7 +1658,8 @@ elif st.session_state.step == 4:
                     if not is_false_positive_brand(b)
                 ]
 
-                linked_sites = extract_linked_sites(response_text)
+                # Web sources take priority; fallback to text-extracted links
+                linked_sites = web_sources if web_sources else extract_linked_sites(response_text)
 
                 all_results.append({
                     "query": q["query"],
@@ -1659,6 +1670,7 @@ elif st.session_state.step == 4:
                     "response": response_text,
                     "brands_detected": brand_data_detected,
                     "linked_sites": linked_sites,
+                    "web_searched": web_searched,
                 })
 
                 # Update live feed
@@ -1666,14 +1678,17 @@ elif st.session_state.step == 4:
                 live_log.append({
                     "prompt": q["query"][:70] + ("..." if len(q["query"]) > 70 else ""),
                     "model": tool_name,
-                    "detected": mentioned
+                    "detected": mentioned,
+                    "web": web_searched,
+                    "sources": len(web_sources)
                 })
                 feed_lines = []
-                for log in live_log[-8:]:  # Show last 8 entries
+                for log in live_log[-8:]:
                     icon = "✅" if log["detected"] else "⚪"
-                    feed_lines.append(f"{icon} **{log['model']}** — {log['prompt']}")
+                    web_tag = " 🌐" if log.get("web") else ""
+                    src_tag = f" ({log['sources']} sources)" if log.get("sources") else ""
+                    feed_lines.append(f"{icon} **{log['model']}**{web_tag}{src_tag} — {log['prompt']}")
                 live_feed.markdown("**Live Results:**\n" + "\n".join(feed_lines))
-
                 call_count += 1
                 progress_bar.progress(min(call_count / total_calls, 1.0))
 
@@ -1905,12 +1920,28 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Linked sites
+                                # Web sources — displayed like ChatGPT source citations
                                 linked = r.get("linked_sites", [])
-                                if linked:
+                                web_searched_r = r.get("web_searched", False)
+
+                                if web_searched_r and linked:
+                                    st.markdown("**🌐 Web Sources Used**")
+                                    st.caption("Response grounded in live web search — same as ChatGPT web interface.")
+                                    for s in linked[:8]:
+                                        title = s.get("title") or s.get("domain", "Source")
+                                        url = s.get("url", "")
+                                        domain = s.get("domain", "")
+                                        if url:
+                                            st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
+                                elif web_searched_r:
+                                    st.caption("🌐 Web search was used for this response.")
+                                elif linked:
                                     st.caption("**Linked Sites:**")
-                                    link_rows = [{"#": s["rank"], "Domain": s["domain"], "URL": s["url"]} for s in linked]
-                                    st.dataframe(pd.DataFrame(link_rows), use_container_width=True, hide_index=True)
+                                    for s in linked[:5]:
+                                        url = s.get("url", "")
+                                        domain = s.get("domain", url)
+                                        if url:
+                                            st.markdown(f"&nbsp;&nbsp;🔗 [{domain}]({url})")
 
                                 # AI Response - highlighted brand mentions
                                 response = r.get("response", "")

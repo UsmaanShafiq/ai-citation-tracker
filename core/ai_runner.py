@@ -196,24 +196,70 @@ def run_on_gemini(query: str) -> str:
         return f"ERROR: {str(e)}"
 
 
-def run_on_chatgpt(query: str) -> str:
+def run_on_chatgpt(query: str) -> dict:
+    """
+    Runs query through GPT-4o with live web search enabled.
+    Returns: {"text": str, "sources": list, "web_searched": bool}
+    This matches the ChatGPT web interface behaviour - grounded in live web results.
+    Universal dict format - future tools (Perplexity, Gemini, Claude) return same structure.
+    """
     try:
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=800
-        )
-        result = response.choices[0].message.content.strip()
-        track_usage("ChatGPT", result)
-        return result
+
+        # Use OpenAI Responses API with web_search_preview tool
+        # This is what makes results match what users see in ChatGPT web interface
+        try:
+            response = client.responses.create(
+                model="gpt-4o",
+                tools=[{"type": "web_search_preview"}],
+                input=query,
+                max_output_tokens=800
+            )
+
+            result_text = ""
+            sources = []
+
+            for item in response.output:
+                if hasattr(item, "type"):
+                    if item.type == "message":
+                        for block in item.content:
+                            if hasattr(block, "text"):
+                                result_text = block.text.strip()
+                            if hasattr(block, "annotations"):
+                                for ann in block.annotations:
+                                    if hasattr(ann, "url"):
+                                        domain = ann.url.split("/")[2] if "/" in ann.url else ann.url
+                                        sources.append({
+                                            "title": getattr(ann, "title", domain),
+                                            "url": ann.url,
+                                            "domain": domain
+                                        })
+
+            # Fallback if text empty
+            if not result_text and hasattr(response, "output_text"):
+                result_text = (response.output_text or "").strip()
+
+            track_usage("ChatGPT", result_text)
+            return {"text": result_text, "sources": sources, "web_searched": True}
+
+        except Exception:
+            # Fallback to standard completion if web search API unavailable
+            fallback = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
+                    {"role": "user", "content": query}
+                ],
+                max_tokens=800
+            )
+            result = fallback.choices[0].message.content.strip()
+            track_usage("ChatGPT", result)
+            return {"text": result, "sources": [], "web_searched": False}
+
     except Exception as e:
         track_usage("ChatGPT", "", is_error=True)
-        return f"ERROR: {str(e)}"
+        return {"text": f"ERROR: {str(e)}", "sources": [], "web_searched": False}
 
 
 def run_on_claude(query: str) -> str:
@@ -303,7 +349,10 @@ ALL_TOOLS = {
 def run_selected_tools(query: str, selected_tools: list) -> dict:
     """
     Runs query through only the selected tools.
-    selected_tools: list of tool name strings
+    Returns dict of {tool_name: result} where result is either:
+    - {"text": str, "sources": list, "web_searched": bool} for tools with web search (ChatGPT)
+    - A plain string for tools without web search (Perplexity, Gemini, Claude)
+    app.py handles both formats transparently.
     """
     results = {}
     for tool_name in selected_tools:
