@@ -294,9 +294,10 @@ def detect_brands(
             target_in_string = True
             break
 
-    # Only mark as mentioned if the brand ACTUALLY appears in the text.
-    # The LLM result is used for context/position only when string match confirms presence.
-    target_mentioned = target_in_string
+    # ABSOLUTE GROUND TRUTH: brand is mentioned ONLY if regex confirms it.
+    # LLM result is completely overridden here - it cannot cause false positives.
+    # This is the final authority. No exceptions.
+    target_mentioned = target_in_string  # regex result ONLY, LLM cannot override
 
     # Get context and position from LLM only when we confirmed the brand is present
     target_context = "not_mentioned"

@@ -1933,6 +1933,17 @@ elif st.session_state.step == 4:
                                 context = r["brands_detected"]["target_context"]
                                 position = r["brands_detected"]["target_position"]
 
+                                # Final safety check — verify brand actually appears in response text
+                                # This catches cases where brand_detector LLM hallucinated a mention
+                                _resp_check = r.get("response", "")
+                                import re as _re2
+                                _brand_in_text = bool(_re2.search(
+                                    r'' + _re2.escape(brand_name) + r'',
+                                    _resp_check, _re2.IGNORECASE
+                                ))
+                                if mentioned and not _brand_in_text:
+                                    mentioned = False  # Override false positive
+
                                 if mentioned:
                                     st.success(f"Brand mentioned | Context: {context} | Position: #{position}")
                                 else:
