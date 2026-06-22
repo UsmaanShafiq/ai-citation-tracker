@@ -1043,16 +1043,14 @@ elif st.session_state.step == 4:
             for prompt in prompts:
                 all_prompts.append({"query": prompt, "topic": topic, "category": "awareness"})
 
-        total_calls = len(all_prompts) * len(selected_tools)
         progress_bar = st.progress(0)
         status_text = st.empty()
-        progress_bar_container = st.empty()
         live_feed = st.empty()
         call_count = 0
         all_results = []
         exhausted_tools = set()
         live_log = []
-        total_calls = len(all_prompts) * len(selected_tool_names)
+        total_calls = len(all_prompts) * len(selected_tools)
 
         for i, q in enumerate(all_prompts):
             status_text.text(f"Running {i+1}/{len(all_prompts)}: {q['query'][:70]}...")
