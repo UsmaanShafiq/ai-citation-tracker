@@ -429,11 +429,16 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "- No country names in prompts\n"
         "- No year numbers\n"
         "- Each is ONE standalone string\n"
-        "- BAD prompts that will NOT get brand citations (avoid these):\n"
-        "  * Bare noun phrases under 4 words: \'bottom-funnel content providers\'\n"
-        "  * Persona complaints without asking for a recommendation: \'I am frustrated with...\' must end with \'what do you recommend?\'\n"
-        "  * Generic service labels that return tools not agencies: \'AI visibility services\'\n"
-        "- GOOD prompts always end with or imply \'which agency/tool do you recommend?\' or \'what do you suggest?\'\n"
+        "- Every prompt MUST force ChatGPT to name specific brands, agencies, or tools\n"
+        "- BAD (will get generic advice or zero brands):\n"
+        "  * Pure noun phrases: \'bottom-funnel content providers\', \'LinkedIn ghostwriting services\'\n"
+        "  * Knowledge questions: \'how to improve AI visibility\', \'what is bottom-funnel content\'\n"
+        "  * Persona without a clear ask: \'I need help with content\' — must end with \'who do you recommend?\'\n"
+        "- GOOD (will get brand citations):\n"
+        "  * Direct search with qualifier: \'best agencies for revenue-driven B2B content\'\n"
+        "  * Clear question: \'which agency is best for SaaS bottom-funnel content?\'\n"
+        "  * Strong persona: \'I am a VP of Marketing. I need a content agency for SaaS. Who do you recommend?\'\n"
+        "  * Comparison: \'Animalz vs Siege Media for B2B SaaS content — which is better?\'\n"
         "\nRespond ONLY with a JSON array of exactly 4 strings. No markdown."
     )
 
@@ -442,30 +447,58 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     brand_lower = brand_name.lower()
     topic_lower = topic.lower().strip()
 
-    # Patterns that produce informational/empty responses instead of brand citations
-    BAD_PROMPT_PATTERNS = [
-        # Vague nouns with no clear recommendation ask
-        r"^(bottom.funnel|top.funnel|mid.funnel)\s+(content\s+)?(providers?|solutions?|services?)$",
-        r"^linkedin\s+ghostwriting\s+(services?|companies|providers?)$",
-        r"^(content|seo|marketing)\s+(services?|solutions?|providers?)$",
-        # Ends with no question - just a bare noun phrase under 4 words
+    # Universal structural validator - works for any niche, any industry
+    # A prompt is GOOD if it will force ChatGPT to name specific brands
+    # A prompt is BAD if ChatGPT will respond with generic advice, tools, or nothing
+
+    # Trigger words that force brand/agency citations in any niche
+    CITATION_TRIGGERS = [
+        "recommend", "suggest", "which", "what's the best", "who should",
+        "compare", "vs", "versus", "alternative", "alternatives",
+        "top", "best", "leading", "agency", "agencies", "firm", "firms",
+        "company", "companies", "tool", "tools", "software", "platform",
+        "service provider", "vendor", "who do you", "any suggestions",
+        "what do you", "which one", "who offers"
     ]
 
-    def is_bad_prompt(p):
-        """Returns True if this prompt will likely return informational/empty results."""
+    # Words that indicate a statement (not a question) with no brand ask
+    STATEMENT_SIGNALS = [
+        "how to", "what is", "what are the benefits", "what does",
+        "explain", "guide", "tutorial", "tips for", "ways to",
+        "understanding", "introduction to", "overview of", "learn",
+        "difference between", "why is", "when should", "how does",
+        "what makes", "how can i improve", "how do i"
+    ]
+
+    def is_citation_producing(p):
+        """
+        Returns True if this prompt will force ChatGPT to name specific brands.
+        Universal logic - works for any industry, any niche.
+        """
         pl = p.lower().strip()
-        # Check bad patterns
-        for pat in BAD_PROMPT_PATTERNS:
-            if _re.match(pat, pl):
-                return True
-        # Too short with no question - just a noun phrase (will return empty or wrong results)
+
+        # Rule 1: Must have at least one citation trigger
+        has_trigger = any(trigger in pl for trigger in CITATION_TRIGGERS)
+
+        # Rule 2: Must NOT be a pure knowledge/information question
+        is_informational = any(signal in pl for signal in STATEMENT_SIGNALS)
+
+        # Rule 3: Persona prompts must end with a recommendation ask
+        is_persona = pl.startswith("i ") or pl.startswith("i'm") or pl.startswith("i am")
+        if is_persona:
+            has_ask = any(ask in pl for ask in ["recommend", "suggest", "what do you", "any suggestions", "who should"])
+            return has_ask
+
+        # Rule 4: Short noun phrases without triggers are bad (e.g. "bottom-funnel content providers")
         words = pl.split()
-        if len(words) <= 3 and "?" not in pl and not any(w in pl for w in ["best", "top", "compare", "vs"]):
-            return True
-        # Persona without a recommendation ask
-        if pl.startswith("i") and any(w in pl for w in ["frustrated", "struggling", "need help with", "looking to"]) and "recommend" not in pl and "suggest" not in pl:
-            return True
-        return False
+        if len(words) <= 5 and not has_trigger and "?" not in pl:
+            return False
+
+        return has_trigger and not is_informational
+
+    def is_bad_prompt(p):
+        """Returns True if this prompt should be rejected and regenerated."""
+        return not is_citation_producing(p)
 
     def process_raw(raw_prompts):
         """Clean, filter, and validate a list of raw prompts."""
