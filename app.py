@@ -424,42 +424,107 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "RULES:\n"
         "- NEVER say " + brand_name + "\n"
         "- Every prompt must be about the TOPIC above - not a generic question\n"
+        "- Every prompt must make ChatGPT NAME SPECIFIC BRANDS OR AGENCIES in its response\n"
         "- Prompt 2 must be clearly different from Prompt 1 in wording\n"
         "- No country names in prompts\n"
         "- No year numbers\n"
         "- Each is ONE standalone string\n"
+        "- BAD prompts that will NOT get brand citations (avoid these):\n"
+        "  * Bare noun phrases under 4 words: \'bottom-funnel content providers\'\n"
+        "  * Persona complaints without asking for a recommendation: \'I am frustrated with...\' must end with \'what do you recommend?\'\n"
+        "  * Generic service labels that return tools not agencies: \'AI visibility services\'\n"
+        "- GOOD prompts always end with or imply \'which agency/tool do you recommend?\' or \'what do you suggest?\'\n"
         "\nRespond ONLY with a JSON array of exactly 4 strings. No markdown."
     )
 
-    raw = _call_ai_for_json(prompt)
-    prompts = _parse_json_list(raw)
-
-    # Post-process: strip any year references dynamically
     import re as _re
     year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
-    prompts = [year_pattern.sub("", p).strip() for p in prompts]
-    # Clean up any double spaces left after year removal
-    prompts = [" ".join(p.split()) for p in prompts]
-
     brand_lower = brand_name.lower()
-    clean = [p.strip() for p in prompts if p.strip() and brand_lower not in p.lower()]
+    topic_lower = topic.lower().strip()
 
-    # Use 90% word overlap threshold for deduplication
-    # Exact match filtering was removing valid prompts that were slightly different
-    def _too_similar(p, t):
-        p_w = set(p.lower().split())
-        t_w = set(t.lower().split())
-        if not t_w:
-            return False
-        return len(p_w & t_w) / len(t_w) > 0.9
+    # Patterns that produce informational/empty responses instead of brand citations
+    BAD_PROMPT_PATTERNS = [
+        # Vague nouns with no clear recommendation ask
+        r"^(bottom.funnel|top.funnel|mid.funnel)\s+(content\s+)?(providers?|solutions?|services?)$",
+        r"^linkedin\s+ghostwriting\s+(services?|companies|providers?)$",
+        r"^(content|seo|marketing)\s+(services?|solutions?|providers?)$",
+        # Ends with no question - just a bare noun phrase under 4 words
+    ]
 
-    result = [topic] + [p for p in clean if not _too_similar(p, topic)]
+    def is_bad_prompt(p):
+        """Returns True if this prompt will likely return informational/empty results."""
+        pl = p.lower().strip()
+        # Check bad patterns
+        for pat in BAD_PROMPT_PATTERNS:
+            if _re.match(pat, pl):
+                return True
+        # Too short with no question - just a noun phrase (will return empty or wrong results)
+        words = pl.split()
+        if len(words) <= 3 and "?" not in pl and not any(w in pl for w in ["best", "top", "compare", "vs"]):
+            return True
+        # Persona without a recommendation ask
+        if pl.startswith("i") and any(w in pl for w in ["frustrated", "struggling", "need help with", "looking to"]) and "recommend" not in pl and "suggest" not in pl:
+            return True
+        return False
 
-    # For non-US countries, add location variant
-    if country_suffix and len(result) < 6:
+    def process_raw(raw_prompts):
+        """Clean, filter, and validate a list of raw prompts."""
+        cleaned = []
+        for p in raw_prompts:
+            p = p.strip()
+            if not p:
+                continue
+            # Strip year numbers
+            p = year_pattern.sub("", p).strip()
+            p = " ".join(p.split())
+            # Skip if contains brand name
+            if brand_lower in p.lower():
+                continue
+            # Skip exact duplicates of topic
+            if p.lower() == topic_lower:
+                continue
+            # Skip duplicates already in list
+            if p.lower() in [x.lower() for x in cleaned]:
+                continue
+            # Skip prompts that will produce bad results
+            if is_bad_prompt(p):
+                continue
+            cleaned.append(p)
+        return cleaned
+
+    # First attempt
+    raw = _call_ai_for_json(prompt)
+    prompts = _parse_json_list(raw)
+    result = [topic] + process_raw(prompts)
+
+    # Add country variant if needed and not US
+    if country_suffix and len(result) < 5:
         location_prompt = topic + country_suffix
         if location_prompt.lower() not in [r.lower() for r in result]:
             result.append(location_prompt)
+
+    # If still under 5, regenerate and fill gaps - up to 2 extra attempts
+    attempts = 0
+    while len(result) < 5 and attempts < 2:
+        attempts += 1
+        retry_prompt = (
+            prompt +
+            f"\n\nIMPORTANT: The previous response was not enough. "
+            f"Generate 4 MORE prompts that are DIFFERENT from these already generated:\n" +
+            "\n".join(f"- {r}" for r in result)
+        )
+        try:
+            raw2 = _call_ai_for_json(retry_prompt)
+            extra = _parse_json_list(raw2)
+            new_clean = process_raw(extra)
+            # Add only what we still need
+            for p in new_clean:
+                if p.lower() not in [r.lower() for r in result]:
+                    result.append(p)
+                if len(result) >= 5:
+                    break
+        except Exception:
+            break
 
     return result[:5]
 
@@ -1086,21 +1151,11 @@ elif st.session_state.step == 3:
     st.subheader("Step 3: Review Prompts")
     st.caption("These prompts will be sent to each AI model to check if your brand is mentioned.")
 
-    total_topics = len(st.session_state.selected_topics)
-    # Calculate actual prompt count from selected prompts, not assumed 5 per topic
-    total_prompts = sum(
-        len(st.session_state.selected_prompts.get(t, []))
-        for t in st.session_state.selected_topics
-    )
-    avg_per_topic = round(total_prompts / total_topics, 1) if total_topics > 0 else 0
-    st.info(f"**{total_topics} topics × {avg_per_topic} avg prompts = {total_prompts} total prompts** per AI model")
-
-    # Generate prompts for each selected topic if not done
+    # Generate prompts for each selected topic FIRST before showing count
     for topic in st.session_state.selected_topics:
         if topic not in st.session_state.prompts_by_topic:
             with st.spinner(f"Generating prompts for: {topic}..."):
                 try:
-                    # Pass full brand_data including cached website text
                     prompts = ai_generate_prompts(topic, st.session_state.brand_data)
                     st.session_state.prompts_by_topic[topic] = prompts
                     st.session_state.selected_prompts[topic] = list(prompts)
@@ -1108,6 +1163,22 @@ elif st.session_state.step == 3:
                     st.warning(f"Could not generate prompts for '{topic}': {format_error_message(str(e))}")
                     st.session_state.prompts_by_topic[topic] = [topic]
                     st.session_state.selected_prompts[topic] = [topic]
+
+    # Count AFTER generation so numbers are accurate
+    total_topics = len(st.session_state.selected_topics)
+    all_generated = all(
+        t in st.session_state.prompts_by_topic
+        for t in st.session_state.selected_topics
+    )
+    total_prompts = sum(
+        len(st.session_state.selected_prompts.get(t, []))
+        for t in st.session_state.selected_topics
+    )
+    if all_generated and total_topics > 0:
+        avg_per_topic = round(total_prompts / total_topics, 1)
+        st.info(f"**{total_topics} topics × {avg_per_topic} avg prompts = {total_prompts} total prompts** per AI model")
+    else:
+        st.info(f"**{total_topics} topics** — generating prompts...")
 
     # Display prompts per topic in accordion style
     for t_idx, topic in enumerate(st.session_state.selected_topics):
