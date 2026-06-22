@@ -312,6 +312,10 @@ def ai_generate_topics(brand_data: dict) -> list:
         "- Every topic must contain a category word: agency, agencies, firm, service, services, "
         "tool, tools, software, platform, company, companies, provider, providers\n"
         "- Use specific language from the brand intelligence above - not generic category labels\n"
+        "- When the brand has AI features, include 'AI-powered' or 'AI-assisted' in topic wording\n"
+        "- CRITICAL: If SOFTWARE/TOOL - use: software, tool, platform. If AGENCY/SERVICE - use: agency, firm, service\n"
+        "- DO NOT use internal product jargon or feature names nobody searches for (e.g. 'dual innovation capture')\n"
+        "- Use common buyer language, not the brand's own marketing terminology\n"
         "- Mix: 3 topics based on unique features/differentiators, 4 based on general buyer intent\n"
         + country_topic_note +
         "\nFor each topic also provide one sentence of buyer intent (why they search this).\n"
@@ -546,7 +550,8 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "top", "best", "leading", "agency", "agencies", "firm", "firms",
         "company", "companies", "tool", "tools", "software", "platform",
         "service provider", "vendor", "who do you", "any suggestions",
-        "what do you", "which one", "who offers"
+        "what do you", "which one", "who offers",
+        "ai-powered", "ai-assisted", "ai powered", "ai assisted"
     ]
 
     # Words that indicate a statement (not a question) with no brand ask
@@ -616,11 +621,21 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     # First attempt
     raw = _call_ai_for_json(prompt)
     prompts = _parse_json_list(raw)
-    result = [topic] + process_raw(prompts)
+
+    # Topic as prompt 1 must start with "best" or "top" to force brand recommendations
+    # Bare noun phrases like "AI-powered invention disclosure software" return definitions
+    # "best AI-powered invention disclosure software" returns actual brand names
+    topic_as_prompt = topic
+    topic_lower_check = topic.lower().strip()
+    if not any(topic_lower_check.startswith(w) for w in
+               ["best ", "top ", "which ", "what ", "who ", "compare", "how does", "is there"]):
+        topic_as_prompt = "best " + topic
+
+    result = [topic_as_prompt] + process_raw(prompts)
 
     # Add country variant if needed and not US
     if country_suffix and len(result) < 5:
-        location_prompt = topic + country_suffix
+        location_prompt = topic_as_prompt + country_suffix
         if location_prompt.lower() not in [r.lower() for r in result]:
             result.append(location_prompt)
 
@@ -903,26 +918,16 @@ with st.sidebar:
 
     st.divider()
     stats = get_usage_stats()
-    any_usage = any(isinstance(stats[t], dict) and stats[t].get("calls", 0) > 0 for t in stats if t != "web_search_errors")
+    any_usage = any(stats[t]["calls"] > 0 for t in stats)
     if any_usage:
         st.subheader("Session Usage")
         for tool_name in selected_tools:
-            if tool_name in stats and isinstance(stats[tool_name], dict) and stats[tool_name].get("calls", 0) > 0:
+            if tool_name in stats and stats[tool_name]["calls"] > 0:
                 s = stats[tool_name]
                 st.markdown(f"**{tool_name}**: {s['calls']} calls, ~{s['estimated_tokens']} tokens")
         if st.button("Reset Stats"):
             reset_usage_stats()
             st.rerun()
-
-    # Show web search errors if any — helps diagnose if web search is silently failing
-    web_errs = stats.get("web_search_errors", [])
-    if web_errs:
-        st.divider()
-        st.warning("⚠️ Web Search Issues Detected")
-        st.caption("Web search fell back to training data for some queries.")
-        with st.expander("View web search errors"):
-            for err in web_errs[-5:]:
-                st.code(err, language=None)
 
     st.divider()
     if st.button("🔄 Start Over", use_container_width=True):
@@ -1634,19 +1639,9 @@ elif st.session_state.step == 4:
                 st.warning("All tools rate-limited. Stopping early.")
                 break
 
-            tool_responses = run_selected_tools(q["query"], active_tools, country=bd.get("country", ""))
+            tool_responses = run_selected_tools(q["query"], active_tools)
 
-            for tool_name, raw_response in tool_responses.items():
-                # Handle both dict format (web search tools) and plain string
-                if isinstance(raw_response, dict):
-                    response_text = raw_response.get("text", "")
-                    web_sources = raw_response.get("sources", [])
-                    web_searched = raw_response.get("web_searched", False)
-                else:
-                    response_text = raw_response
-                    web_sources = []
-                    web_searched = False
-
+            for tool_name, response_text in tool_responses.items():
                 if response_text.startswith("ERROR"):
                     clean_error = response_text.split("ERROR:", 1)[-1].strip()
                     if any(x in clean_error.lower() for x in ["429", "rate_limit", "resource_exhausted", "quota"]):
@@ -1668,8 +1663,7 @@ elif st.session_state.step == 4:
                     if not is_false_positive_brand(b)
                 ]
 
-                # Web sources take priority; fallback to text-extracted links
-                linked_sites = web_sources if web_sources else extract_linked_sites(response_text)
+                linked_sites = extract_linked_sites(response_text)
 
                 all_results.append({
                     "query": q["query"],
@@ -1680,7 +1674,6 @@ elif st.session_state.step == 4:
                     "response": response_text,
                     "brands_detected": brand_data_detected,
                     "linked_sites": linked_sites,
-                    "web_searched": web_searched,
                 })
 
                 # Update live feed
@@ -1688,21 +1681,14 @@ elif st.session_state.step == 4:
                 live_log.append({
                     "prompt": q["query"][:70] + ("..." if len(q["query"]) > 70 else ""),
                     "model": tool_name,
-                    "detected": mentioned,
-                    "web": web_searched,
-                    "sources": len(web_sources)
+                    "detected": mentioned
                 })
                 feed_lines = []
-                for log in live_log[-8:]:
+                for log in live_log[-8:]:  # Show last 8 entries
                     icon = "✅" if log["detected"] else "⚪"
-                    if log.get("web") and log.get("sources", 0) > 0:
-                        web_tag = f" 🌐 ({log['sources']} sources)"
-                    elif log.get("web"):
-                        web_tag = " 🌐"
-                    else:
-                        web_tag = " 📚"  # training data only
-                    feed_lines.append(f"{icon} **{log['model']}**{web_tag} — {log['prompt']}")
+                    feed_lines.append(f"{icon} **{log['model']}** — {log['prompt']}")
                 live_feed.markdown("**Live Results:**\n" + "\n".join(feed_lines))
+
                 call_count += 1
                 progress_bar.progress(min(call_count / total_calls, 1.0))
 
@@ -1934,28 +1920,12 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Web sources — displayed like ChatGPT source citations
+                                # Linked sites
                                 linked = r.get("linked_sites", [])
-                                web_searched_r = r.get("web_searched", False)
-
-                                if web_searched_r and linked:
-                                    st.markdown("**🌐 Web Sources Used**")
-                                    st.caption("Response grounded in live web search — same as ChatGPT web interface.")
-                                    for s in linked[:8]:
-                                        title = s.get("title") or s.get("domain", "Source")
-                                        url = s.get("url", "")
-                                        domain = s.get("domain", "")
-                                        if url:
-                                            st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
-                                elif web_searched_r:
-                                    st.caption("🌐 Web search was used for this response.")
-                                elif linked:
+                                if linked:
                                     st.caption("**Linked Sites:**")
-                                    for s in linked[:5]:
-                                        url = s.get("url", "")
-                                        domain = s.get("domain", url)
-                                        if url:
-                                            st.markdown(f"&nbsp;&nbsp;🔗 [{domain}]({url})")
+                                    link_rows = [{"#": s["rank"], "Domain": s["domain"], "URL": s["url"]} for s in linked]
+                                    st.dataframe(pd.DataFrame(link_rows), use_container_width=True, hide_index=True)
 
                                 # AI Response - highlighted brand mentions
                                 response = r.get("response", "")
