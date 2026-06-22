@@ -368,31 +368,41 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         solution_word = "product or service"
         avoid_line = ""
 
+    # Rotate persona role per topic
+    customers_list = brand_data.get("customers", [])
+    persona_role = customers_list[sum(ord(c) for c in topic) % len(customers_list)] if customers_list else "professional"
+
+    # Country as system context not in prompt text
+    country_system = ""
+    if country and country.lower() not in ["global", ""]:
+        country_system = f"\nUser location context: {country}. Tailor relevance to this market."
+
     prompt = (
-        "You track brand visibility in AI search tools like ChatGPT and Perplexity.\n\n"
-        "For the topic below, generate EXACTLY 5 prompts that a real BUYER would type "
-        "when they want an AI to recommend a specific " + solution_word + ".\n\n"
-        "Topic: " + topic + "\n\n"
-        "Context:\n"
+        "You generate search prompts for AI visibility tracking.\n\n"
+        "TOPIC: " + topic + "\n\n"
+        "Your job: write 4 prompts that a REAL PERSON would type into ChatGPT when looking for a " + solution_word + " in this space.\n\n"
+        "Context about the brand\'s niche:\n"
         + context_block
-        + competitor_context + "\n"
-        "Business type: " + business_type + "\n\n"
+        + competitor_context
+        + country_system + "\n\n"
+        "HOW A REAL PERSON TYPES INTO CHATGPT:\n"
+        "- Short and direct: \'best patent search tool\' not \'What is the best patent search tool available??\'\n"
+        "- Conversational: \'what should I use for prior art search\' not \'Which tool is optimal for prior art search??\'\n"
+        "- Natural: no formal structure, no AI-sounding language\n"
+        "- They do NOT mention country names - they just type what they want\n\n"
+        "GENERATE EXACTLY 4 PROMPTS:\n"
+        "1. DIRECT SEARCH: 3-5 words, exactly what someone types. No question mark. Like: \'best ai patent search tool\'\n"
+        "2. NATURAL QUESTION: casual question about the topic. Like: \'what\'s a good tool for finding prior art?\' or \'which content agency is best for saas?\'\n"
+        "3. COMPARISON: compare " + (" vs ".join(comp_for_comparison) if competitors and len(comp_for_comparison) >= 2 else "two known options in this space") + " for this topic\n"
+        "4. PERSONA: \'I\'m a " + persona_role + " at a [company]. I need [specific need from topic]. What do you recommend?\' - keep it casual and real\n\n"
         "STRICT RULES:\n"
         "- NEVER mention \"" + brand_name + "\" in any prompt\n"
-        "- Every prompt must make an AI name specific brands in its answer\n"
-        "- Do NOT write how-to, strategy, or educational prompts\n"
-        "- Do NOT write prompts that would be answered with generic advice\n"
-        "- Do NOT include any year numbers like 2023, 2024, 2025 - they go stale. Use natural language instead\n"
+        "- DO NOT add country names inside prompts - location context is handled separately\n"
+        "- DO NOT use year numbers\n"
+        "- Every prompt must be ONE standalone string - do not merge them\n"
+        "- Each prompt must stay strictly within the TOPIC above\n"
         + avoid_line +
-        "- If competitors are listed above, use different ones across comparison prompts\n"
-        "\nGenerate EXACTLY 4 separate standalone prompts. Each must be its own complete question or search phrase.\n"
-        "Return them as a JSON array of 4 independent strings.\n\n"
-        "Prompt 1 - SHORT SEARCH PHRASE: 3-6 words only" + (f", must include '{country}'" if country and country.lower() != "global" else "") + ". No question mark. Example: 'best patent search software United States'\n"
-        "Prompt 2 - BEST-OF QUESTION: one clear question asking which " + solution_word + " is best for a use case. Example: 'Which is the best AI patent search tool for finding prior art?'\n"
-        "Prompt 3 - COMPARISON: one clear question comparing two competitors. Example: 'How does TriangleIP compare to AcclaimIP for patent searches?'\n"
-        "Prompt 4 - PERSONA: exactly this format: 'I am a [role] at a [company type]. I need [specific need]. What " + solution_word + " do you recommend?' Keep it to 2-3 short sentences max.\n"
-        "\nIMPORTANT: Each of the 4 prompts must be a single standalone string. Do NOT combine multiple prompts into one string.\n"
-        "\nRespond ONLY with a JSON array of exactly 4 strings. No explanation, no markdown."
+        "\nRespond ONLY with a JSON array of exactly 4 strings. No markdown. No explanation."
     )
 
     raw = _call_ai_for_json(prompt)
@@ -779,6 +789,10 @@ if st.session_state.step == 1:
     if st.button("Next: Generate Topics →", type="primary"):
         if not brand_name.strip() or not brand_domain.strip():
             st.error("Brand Name and Domain are required.")
+        elif not products_list:
+            st.error("Please add at least one product or service.")
+        elif not competitors_list_input:
+            st.error("⚠️ Competitors are required. Add at least one direct competitor for accurate comparison prompts and benchmarking.")
         else:
             st.session_state.brand_data = {
                 "name": brand_name.strip(),
@@ -1032,12 +1046,16 @@ elif st.session_state.step == 4:
         total_calls = len(all_prompts) * len(selected_tools)
         progress_bar = st.progress(0)
         status_text = st.empty()
+        progress_bar_container = st.empty()
+        live_feed = st.empty()
         call_count = 0
         all_results = []
         exhausted_tools = set()
+        live_log = []
+        total_calls = len(all_prompts) * len(selected_tool_names)
 
         for i, q in enumerate(all_prompts):
-            status_text.text(f"Prompt {i+1}/{len(all_prompts)}: {q['query'][:70]}...")
+            status_text.text(f"Running {i+1}/{len(all_prompts)}: {q['query'][:70]}...")
             active_tools = [t for t in selected_tools if t not in exhausted_tools]
             if not active_tools:
                 st.warning("All tools rate-limited. Stopping early.")
@@ -1079,6 +1097,19 @@ elif st.session_state.step == 4:
                     "brands_detected": brand_data_detected,
                     "linked_sites": linked_sites,
                 })
+
+                # Update live feed
+                mentioned = brand_data_detected.get("target_mentioned", False)
+                live_log.append({
+                    "prompt": q["query"][:70] + ("..." if len(q["query"]) > 70 else ""),
+                    "model": tool_name,
+                    "detected": mentioned
+                })
+                feed_lines = []
+                for log in live_log[-8:]:  # Show last 8 entries
+                    icon = "✅" if log["detected"] else "⚪"
+                    feed_lines.append(f"{icon} **{log['model']}** — {log['prompt']}")
+                live_feed.markdown("**Live Results:**\n" + "\n".join(feed_lines))
 
                 call_count += 1
                 progress_bar.progress(min(call_count / total_calls, 1.0))
@@ -1138,6 +1169,51 @@ elif st.session_state.step == 4:
             c2.metric("Total Mentions", f"{scores['total_mentions']} / {scores['total_queries_run']}")
             c3.metric("Position Score", f"{scores['position_score_pct']}%")
             c4.metric("Topics Tracked", len(st.session_state.selected_topics))
+
+            # ── Competitor benchmark ──────────────────────────────────────
+            st.divider()
+            st.subheader("📊 How You Compare Against Competitors")
+            st.caption("Your brand vs competitors mentioned by AI across all prompts.")
+
+            real_comps = scores.get("real_competitors", [])
+            total_q_b = scores["total_queries_run"]
+            your_pct = scores["overall_citation_share"]
+            user_comps = bd.get("competitors", [])
+            detected_map = {b.lower(): c for b, c in real_comps}
+
+            bench_rows = [{"Brand": f"🎯 {brand_name} (You)", "AI Mentions": scores["total_mentions"],
+                           "Visibility": f"{your_pct}%", "Note": "Your Brand"}]
+            for comp in user_comps:
+                mentions = detected_map.get(comp.lower(), 0)
+                pct = round((mentions / total_q_b) * 100) if total_q_b > 0 else 0
+                bench_rows.append({"Brand": comp, "AI Mentions": mentions,
+                                   "Visibility": f"{pct}%", "Note": "Your Competitor"})
+            for bc, cnt in real_comps[:8]:
+                if bc.lower() not in [c.lower() for c in user_comps] and bc.lower() != brand_name.lower():
+                    pct = round((cnt / total_q_b) * 100) if total_q_b > 0 else 0
+                    bench_rows.append({"Brand": bc, "AI Mentions": cnt,
+                                       "Visibility": f"{pct}%", "Note": "Also Detected"})
+            st.dataframe(pd.DataFrame(bench_rows), use_container_width=True, hide_index=True)
+
+            # ── Why not appearing insight ─────────────────────────────────
+            if your_pct == 0 and real_comps:
+                top_name, top_cnt = real_comps[0]
+                top_pct = round((top_cnt / total_q_b) * 100)
+                st.warning(
+                    f"**{brand_name} has 0% AI visibility.** "
+                    f"The most mentioned brand was **{top_name}** at {top_pct}% of responses. "
+                    f"To improve visibility, {brand_name} needs more published content, case studies, "
+                    f"and citations online that AI models can learn from."
+                )
+            elif your_pct > 0 and real_comps:
+                top_name, top_cnt = real_comps[0]
+                top_pct = round((top_cnt / total_q_b) * 100)
+                if top_pct > your_pct:
+                    st.info(
+                        f"**{brand_name}** has {your_pct}% visibility. "
+                        f"**{top_name}** leads at {top_pct}%. "
+                        f"Gap to close: {top_pct - your_pct}%."
+                    )
 
             # ── Charts ───────────────────────────────────────────────────
             st.subheader("Visibility Overview")
@@ -1252,15 +1328,32 @@ elif st.session_state.step == 4:
                                     link_rows = [{"#": s["rank"], "Domain": s["domain"], "URL": s["url"]} for s in linked]
                                     st.dataframe(pd.DataFrame(link_rows), use_container_width=True, hide_index=True)
 
-                                # AI Response (collapsed)
-                                with st.expander("Full AI Response"):
-                                    response = r.get("response", "")
-                                    # Highlight brand mentions
-                                    highlighted = response.replace(
-                                        brand_name,
-                                        f"**:green[{brand_name}]**"
-                                    )
-                                    st.markdown(highlighted[:3000])
+                                # AI Response - highlighted brand mentions
+                                response = r.get("response", "")
+                                exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
+                                with st.expander(exp_label):
+                                    if response:
+                                        # Highlight all variants of brand name
+                                        import re as _re
+                                        highlighted = response
+                                        # Try exact name and spaced variants
+                                        variants_to_highlight = [brand_name]
+                                        if " " not in brand_name:
+                                            spaced = _re.sub(r"([a-z])([A-Z])", r"\1 \2", brand_name)
+                                            if spaced != brand_name:
+                                                variants_to_highlight.append(spaced)
+                                        for v in variants_to_highlight:
+                                            highlighted = _re.sub(
+                                                r"\b" + _re.escape(v) + r"\b",
+                                                f"**🟡 {v}**",
+                                                highlighted,
+                                                flags=_re.IGNORECASE
+                                            )
+                                        st.markdown(highlighted[:3000])
+                                        if mentioned:
+                                            st.success(f"✅ {brand_name} appears in this response")
+                                    else:
+                                        st.caption("No response recorded.")
 
             # ── Competitor ranking - 3 dynamic categories ───────────────
             st.subheader("Brands Detected in AI Responses")
@@ -1418,16 +1511,4 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    st.rerun(        "RULES:\\n"
-        "- Every topic must be something where an AI would respond by naming specific brands\\n"
-        "- Topics must reflect FINDING or CHOOSING a " + solution_type + ", not learning about one\\n"
-        "- Do NOT generate how-to, strategy, tips, or educational topics\\n"
-        "- Do NOT include the brand name \'" + brand_name + "\' in any topic\\n"
-        "- Every topic MUST contain a clear category word like: agency, agencies, firm, firms, service, services, tool, software, platform, company, companies\\n"
-        "- This anchor word ensures AI returns brand recommendations not generic advice\\n"
-        "- BAD example: \'top SaaS content providers\' | GOOD: \'top SaaS content marketing agencies\'\\n"
-        "- BAD example: \'leading thought leadership consultants\' | GOOD: \'top thought leadership content agencies\'\\n"
-        "- Vary the topics: mix of direct search, comparison, and use-case topics\\n"
-        + (f"- Include \'{country}\' in 1 topic\\n" if country and country.lower() not in ["global", "united states", ""] else "") +
-        "\\nGenerate exactly 7 short topics (3-8 words each).\\n"
-        "Respond ONLY with a JSON array of 7 strings. No explanation, no markdown.")
+                    st.rerun()

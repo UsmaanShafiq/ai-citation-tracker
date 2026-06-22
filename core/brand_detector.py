@@ -71,12 +71,14 @@ def pass_one_string_match(
 def _call_llm_for_detection(prompt: str) -> str:
     """
     Calls the best available LLM for brand detection.
-    Tries OpenAI first, then Groq as fallback.
-    Returns cleaned JSON string.
+    Priority: OpenAI gpt-4o-mini first (best accuracy), Groq as free fallback.
+    NOTE: Groq fallback is intentionally kept here for brand DETECTION only.
+    It is separate from the tracking tools (ai_runner.py) where Groq is disabled.
+    This ensures brand detection always works even without an OpenAI key.
     """
     import re as _re
 
-    # Try OpenAI first
+    # Try OpenAI first (preferred - most accurate for structured JSON output)
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     if openai_key and "paste_your" not in openai_key.lower():
         try:
