@@ -231,62 +231,78 @@ def ai_generate_topics(brand_data: dict) -> list:
         "Key differentiators: " + key_features + "\n"
     )
 
-    # ── STAGE 1: Brand Intelligence ───────────────────────────────────────────
-    # Ask the AI to deeply understand the brand before generating topics.
-    # This is model-agnostic - works with GPT, Gemini, Claude, Groq, or any future model.
-    # The intelligence layer removes the need for keyword rules and mechanical filters.
-    # Include buyer insights from Step 1.5 if available
+    # ── STAGE 1: Simulate Buyer Search Behavior ─────────────────────────────
+    # Core insight: instead of asking "what does this brand do?", we ask the AI
+    # to think like the actual buyer and generate the exact phrases they type.
+    # This eliminates keyword rules entirely. Works for any brand in any industry.
+    # Model-agnostic: GPT, Gemini, Claude, or any future model via _call_ai_for_json.
+
     buyer_insights = brand_data.get("_buyer_insights", [])
     buyer_insights_text = ""
     if buyer_insights:
-        buyer_insights_text = "\nDIRECT BUYER INSIGHTS (answers from the brand owner - highest priority):\n"
+        buyer_insights_text = "\nDIRECT ANSWERS FROM THE BRAND OWNER (highest priority):\n"
         for qa in buyer_insights:
             buyer_insights_text += f"Q: {qa['question']}\nA: {qa['answer']}\n\n"
 
     intelligence_prompt = (
-        "You are an AI visibility analyst. Read the brand information below carefully.\n\n"
+        "You are simulating the search behavior of a real buyer for this brand.\n\n"
+        "Read all the information below very carefully:\n\n"
         + raw_context
         + buyer_insights_text + "\n"
-        "Based on this, answer these 4 questions in JSON format:\n"
+        "Think deeply: who buys from this brand, and what exact words do they type into "
+        "ChatGPT or Google when they are ready to find and choose a solution like this one?\n\n"
+        "Generate a buyer search intelligence report in this exact JSON format:\n"
         "{\n"
-        "  \"what_they_offer\": \"One sentence describing exactly what this brand offers in plain language\",\n"
-        "  \"exact_buyer\": \"One sentence describing the specific person who needs this, their role and situation\",\n"
-        "  \"buyer_search_intent\": \"What would this buyer type into an AI tool when they are ready to find and choose a solution like this one?\",\n"
-        "  \"unique_angle\": \"What makes this brand stand out from obvious alternatives in 1 sentence?\"\n"
+        "  \"buyer_profile\": \"Who is the exact buyer — role, company type, problem they solve\",\n"
+        "  \"search_phrases\": [\"phrase1\", \"phrase2\", \"phrase3\", \"phrase4\", \"phrase5\"],\n"
+        "  \"category_word\": \"single word buyers use for this solution type (agency/software/platform/firm/provider/etc)\",\n"
+        "  \"avoid_words\": [\"words that attract wrong category of results\"]\n"
         "}\n\n"
-        "Be specific to THIS brand. Do not use generic category labels.\n"
-        "For example, not \'patent software\' but \'patent management software for startup founders who want to file without expensive counsel\'\n"
-        "Respond ONLY with valid JSON. No explanation, no markdown."
+        "RULES for search_phrases:\n"
+        "- These must be the EXACT words a real buyer types — not marketing language\n"
+        "- Use the brand's actual vendor names, product names, certification names from the content\n"
+        "- Do NOT invent terms not mentioned in the brand information above\n"
+        "- Each phrase: 3-8 words, starts with best/top/which/who offers/compare\n"
+        "- Must be specific enough that an AI would name specific brands in its answer\n\n"
+        "Example for an authorized Juniper training company:\n"
+        "search_phrases: ['best authorized Juniper Networks training company', "
+        "'Palo Alto Networks ATP training providers', "
+        "'Fortinet NSE certification training companies', "
+        "'which companies offer Juniper JNCIA bootcamp', "
+        "'authorized networking certification training partners']\n\n"
+        "Respond ONLY with valid JSON. No markdown, no explanation."
     )
 
     brand_intelligence = {}
     try:
+        import json as _json
         intel_raw = _call_ai_for_json(intelligence_prompt)
-        parsed_intel = _parse_json_list(intel_raw)
-        if isinstance(parsed_intel, list) and len(parsed_intel) > 0:
-            brand_intelligence = parsed_intel[0] if isinstance(parsed_intel[0], dict) else {}
-        elif isinstance(intel_raw, str):
-            import json as _json
-            try:
-                brand_intelligence = _json.loads(intel_raw)
-            except Exception:
-                brand_intelligence = {}
+        try:
+            brand_intelligence = _json.loads(intel_raw)
+        except Exception:
+            parsed_intel = _parse_json_list(intel_raw)
+            if isinstance(parsed_intel, list) and len(parsed_intel) > 0:
+                brand_intelligence = parsed_intel[0] if isinstance(parsed_intel[0], dict) else {}
     except Exception:
         brand_intelligence = {}
 
-    # Build enriched context from brand intelligence
-    if brand_intelligence:
-        enriched_context = (
-            "BRAND INTELLIGENCE (AI-generated understanding of this brand):\n"
-            + f"What they offer: {brand_intelligence.get('what_they_offer', '')}\n"
-            + f"Exact buyer: {brand_intelligence.get('exact_buyer', '')}\n"
-            + f"Buyer search intent: {brand_intelligence.get('buyer_search_intent', '')}\n"
-            + f"Unique angle: {brand_intelligence.get('unique_angle', '')}\n\n"
-            + "RAW BRAND DATA (supplement only):\n"
-            + raw_context
-        )
-    else:
-        enriched_context = raw_context
+    simulated_searches = brand_intelligence.get("search_phrases", [])
+    category_word = brand_intelligence.get("category_word", "")
+    avoid_words = brand_intelligence.get("avoid_words", [])
+    buyer_profile = brand_intelligence.get("buyer_profile", "")
+
+    # Build enriched context from simulation results
+    enriched_context = ""
+    if buyer_profile:
+        enriched_context += f"BUYER PROFILE: {buyer_profile}\n\n"
+    if simulated_searches:
+        enriched_context += "SIMULATED BUYER SEARCHES (use as foundation for topics):\n"
+        for phrase in simulated_searches:
+            enriched_context += f"- {phrase}\n"
+        enriched_context += "\n"
+    if category_word:
+        enriched_context += f"CATEGORY WORD buyers use: {category_word}\n\n"
+    enriched_context += "RAW BRAND DATA:\n" + raw_context
 
     # Country context
     country_note = f"User location: {country}\n" if country and country.lower() != "global" else ""
@@ -295,30 +311,28 @@ def ai_generate_topics(brand_data: dict) -> list:
         if country and country.lower() not in ["global", "united states", ""] else ""
     )
 
-    # ── STAGE 2: Topic Generation from Brand Intelligence ─────────────────────
-    # Topics are generated from genuine understanding, not keyword rules.
-    # Works for any brand type: software, agency, service, marketplace, etc.
+    # ── STAGE 2: Expand and Validate Buyer Searches into Topics ────────────────
+    # The simulated buyer searches from Stage 1 become the foundation.
+    # We expand them to 7 varied topics covering different search angles.
+    # No keyword rules needed — the AI already knows what buyers search for.
+
     topic_prompt = (
         "You track brand visibility across AI tools like ChatGPT, Perplexity, Claude, and Gemini.\n\n"
-        "Based on the brand intelligence below, generate 7 search topics that the EXACT BUYER "
-        "described would type into an AI tool when they are ready to find and choose a solution.\n\n"
         + enriched_context
         + country_note + "\n"
+        "Using the buyer profile and simulated searches above as your foundation, "
+        "generate 7 topics that this exact buyer would type into an AI tool.\n\n"
         "RULES:\n"
-        "- Topics must be what the EXACT BUYER would search - not generic category searches\n"
-        "- Every topic must cause an AI to respond by naming specific brands or providers\n"
-        "- Do NOT generate informational, educational, or how-to topics\n"
-        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
-        "- Every topic must contain a category word: agency, agencies, firm, service, services, "
-        "tool, tools, software, platform, company, companies, provider, providers\n"
-        "- Use specific language from the brand intelligence above - not generic category labels\n"
-        "- When the brand has AI features, include 'AI-powered' or 'AI-assisted' in topic wording\n"
-        "- CRITICAL: If SOFTWARE/TOOL - use: software, tool, platform. If AGENCY/SERVICE - use: agency, firm, service\n"
-        "- DO NOT use internal product jargon or feature names nobody searches for (e.g. 'dual innovation capture')\n"
-        "- Use common buyer language, not the brand's own marketing terminology\n"
-        "- Mix: 3 topics based on unique features/differentiators, 4 based on general buyer intent\n"
+        "- Start from the SIMULATED BUYER SEARCHES above — expand and vary them\n"
+        "- Every topic must make an AI name specific brands, companies, or providers\n"
+        "- Do NOT generate educational, how-to, or informational topics\n"
+        "- Do NOT include '" + brand_name + "' in any topic\n"
+        "- Use the exact vendor names, product names, certification names from the brand data\n"
+        "- Use the category word buyers actually use (from CATEGORY WORD above)\n"
+        "- Do NOT invent terms or add qualifiers not present in the brand information\n"
+        "- Vary the angles: direct search, vendor-specific, comparison, use-case, audience-specific\n"
         + country_topic_note +
-        "\nFor each topic also provide one sentence of buyer intent (why they search this).\n"
+        "\nFor each topic provide one sentence of buyer intent.\n"
         "Respond ONLY with a JSON array of 7 objects: "
         "[{\"topic\": \"...\" , \"intent\": \"...\"}, ...]\n"
         "No markdown, no explanation."
