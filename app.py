@@ -1927,19 +1927,36 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Linked sites
+                                # Web sources — shown like ChatGPT citations
                                 linked = r.get("linked_sites", [])
-                                if linked:
-                                    st.caption("**Linked Sites:**")
-                                    link_rows = [{"#": s["rank"], "Domain": s["domain"], "URL": s["url"]} for s in linked]
-                                    st.dataframe(pd.DataFrame(link_rows), use_container_width=True, hide_index=True)
+                                web_searched_r = r.get("web_searched", False)
+                                src_count = len(linked)
 
-                                # AI Response - highlighted brand mentions
+                                if web_searched_r and src_count > 0:
+                                    st.markdown(f"🌐 **Web searched** · 📎 **{src_count} source{'s' if src_count != 1 else ''} used**")
+                                elif web_searched_r:
+                                    st.markdown("🌐 **Web searched**")
+
+                                # AI Response expander
                                 response = r.get("response", "")
-                                exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
+                                if web_searched_r and src_count > 0:
+                                    exp_label = (f"✅ View AI Response + {src_count} sources (brand found)"
+                                                 if mentioned else f"View AI Response + {src_count} sources")
+                                else:
+                                    exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
                                 with st.expander(exp_label):
+                                    # Show sources inside expander
+                                    if web_searched_r and linked:
+                                        st.markdown("**🌐 Web Sources Used**")
+                                        st.caption("Response grounded in live web search — same as ChatGPT web interface.")
+                                        for s in linked[:8]:
+                                            title = s.get("title") or s.get("domain", "Source")
+                                            url = s.get("url", "")
+                                            domain = s.get("domain", "")
+                                            if url:
+                                                st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
+                                        st.divider()
                                     if response:
-                                        # Highlight all variants of brand name
                                         import re as _re
                                         highlighted = response
                                         # Try exact name and spaced variants
