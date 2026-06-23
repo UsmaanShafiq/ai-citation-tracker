@@ -197,6 +197,150 @@ def fetch_brand_website(domain: str) -> str:
         return ""
 
 
+def resolve_brand_terms(brand_data: dict) -> dict:
+    """
+    Context-aware term resolver. Reads the brand's website and form data,
+    identifies any ambiguous abbreviations or new industry terms, and resolves
+    them to their full meaning based on the brand's actual context.
+
+    Works universally for any brand in any industry — no hardcoding.
+    Returns a dict of {abbreviation: full_meaning} resolved for THIS brand.
+
+    Examples:
+      Siege Media website → GEO = "Generative Engine Optimization"
+      Real estate site   → GEO = "geographic targeting"
+      InspireIP website  → IP  = "Intellectual Property"
+      Network IT site    → IP  = "Internet Protocol"
+
+    The resolved glossary is injected into every topic and prompt generation
+    call so the AI never misreads an abbreviation.
+    """
+    import json as _json
+
+    # If already resolved this session, return cached result
+    cached = brand_data.get("_resolved_terms", {})
+    if cached:
+        return cached
+
+    website_text = brand_data.get("_website_text", "")
+    products = ", ".join(brand_data.get("products", []))
+    customers = ", ".join(brand_data.get("customers", []))
+    key_features = ", ".join(brand_data.get("key_features", []))
+    business_type = brand_data.get("business_type", "")
+    brand_name = brand_data.get("name", "")
+
+    # ── Known ambiguous terms that ChatGPT consistently misreads ─────────────
+    # Each entry has multiple possible meanings — context decides which one.
+    AMBIGUOUS_TERMS = {
+        "GEO": ["Generative Engine Optimization (marketing)", "Geographic / Geospatial"],
+        "LLM": ["Large Language Model (AI)", "Master of Laws (legal degree)"],
+        "IP": ["Intellectual Property", "Internet Protocol (networking)"],
+        "PR": ["Public Relations / Digital PR", "Pull Request (software development)"],
+        "ML": ["Machine Learning", "Markup Language"],
+        "AR": ["Augmented Reality", "Accounts Receivable"],
+        "NLP": ["Natural Language Processing", "No List Price"],
+        "AEO": ["Answer Engine Optimization", "Account Executive Operations"],
+        "LLMO": ["Large Language Model Optimization", "unknown"],
+        "SEO": ["Search Engine Optimization", "Securities and Exchange Organization"],
+        "CRO": ["Conversion Rate Optimization", "Chief Revenue Officer"],
+        "GTM": ["Go-To-Market strategy", "Google Tag Manager"],
+        "SEM": ["Search Engine Marketing", "Scanning Electron Microscope"],
+        "PPC": ["Pay Per Click advertising", "Power PC"],
+        "ATP": ["Authorized Training Partner", "Adenosine Triphosphate (biology)"],
+        "NSE": ["Network Security Expert (Fortinet certification)", "National Stock Exchange"],
+        "JNCIA": ["Juniper Networks Certified Internet Associate", "unknown"],
+        "CDP": ["Customer Data Platform", "Continuing Development Programme"],
+        "CMS": ["Content Management System", "Centers for Medicare Services"],
+        "API": ["Application Programming Interface", "unknown"],
+        "SDK": ["Software Development Kit", "unknown"],
+        "SLA": ["Service Level Agreement", "unknown"],
+        "ROI": ["Return on Investment", "unknown"],
+    }
+
+    # Build context for the resolver
+    brand_context = ""
+    if website_text:
+        brand_context += "WEBSITE CONTENT:\n" + website_text[:2000] + "\n\n"
+    brand_context += (
+        "Brand: " + brand_name + "\n"
+        "Business type: " + business_type + "\n"
+        "Products/Services: " + products + "\n"
+        "Customers: " + customers + "\n"
+        "Key features: " + key_features + "\n"
+    )
+
+    # Only check terms that actually appear in the brand's context
+    all_brand_text = (brand_context + products + " " + key_features).upper()
+    terms_to_check = {
+        term: meanings for term, meanings in AMBIGUOUS_TERMS.items()
+        if term in all_brand_text
+    }
+
+    if not terms_to_check:
+        # No ambiguous terms found — return empty dict (nothing to resolve)
+        brand_data["_resolved_terms"] = {}
+        return {}
+
+    # Build the resolver prompt
+    terms_list = "\n".join(
+        f"- {term}: could mean {' OR '.join(meanings)}"
+        for term, meanings in terms_to_check.items()
+    )
+
+    resolver_prompt = (
+        "You are resolving abbreviations for a brand based on their website and business context.\n\n"
+        "BRAND CONTEXT:\n"
+        + brand_context
+        + "\nAMBIGUOUS TERMS FOUND IN THIS BRAND'S DATA:\n"
+        + terms_list
+        + "\n\nFor each term above, decide which meaning applies to THIS specific brand "
+        "based on their website content and business context.\n\n"
+        "Return ONLY a JSON object:\n"
+        '{"TERM": "full expanded meaning for this brand", ...}\n\n'
+        "Example for a marketing agency:\n"
+        '{"GEO": "Generative Engine Optimization", "PR": "Digital Public Relations"}\n\n'
+        "Example for a network IT company:\n"
+        '{"IP": "Internet Protocol", "ATP": "Authorized Training Partner"}\n\n'
+        "Only include terms that are clearly relevant to this brand.\n"
+        "Use the brand own language from their website — not generic definitions.\n"
+        "Respond ONLY with valid JSON. No markdown, no explanation."
+    )
+
+    try:
+        raw = _call_ai_for_json(resolver_prompt)
+        try:
+            resolved = _json.loads(raw)
+        except Exception:
+            parsed = _parse_json_list(raw)
+            resolved = parsed[0] if parsed and isinstance(parsed[0], dict) else {}
+
+        # Validate — only keep string values
+        resolved = {
+            k: v for k, v in resolved.items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()
+        }
+
+        brand_data["_resolved_terms"] = resolved
+        return resolved
+
+    except Exception:
+        brand_data["_resolved_terms"] = {}
+        return {}
+
+
+def build_term_glossary(resolved_terms: dict) -> str:
+    """
+    Converts resolved terms dict into a glossary string
+    to inject into every AI prompt. Prevents misreading.
+    """
+    if not resolved_terms:
+        return ""
+    lines = ["TERM GLOSSARY FOR THIS BRAND (use these exact meanings, never abbreviate):"]
+    for term, meaning in resolved_terms.items():
+        lines.append(f"- {term} = {meaning} (always write the full phrase, never just '{term}')")
+    return "\n".join(lines) + "\n\n"
+
+
 def ai_generate_topics(brand_data: dict) -> list:
     """
     Three-phase topic generation - universal, works for any business.
@@ -221,6 +365,10 @@ def ai_generate_topics(brand_data: dict) -> list:
     website_text = brand_data.get("_website_text", "")
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
+
+    # ── TERM RESOLUTION: Silently resolve ambiguous terms before any AI call
+    resolved_terms = resolve_brand_terms(brand_data)
+    term_glossary = build_term_glossary(resolved_terms)
 
     # ── PHASE 1: Extract brand anchors from user data (no AI needed) ─────────
     # Finds specific terms the brand actually uses — product names, vendor names,
@@ -282,6 +430,7 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     understanding_prompt = (
         "Read this brand information and answer in JSON format.\n\n"
+        + term_glossary
         + raw_context
         + buyer_insights_text
         + "\nAnswer about THIS specific brand:\n"
@@ -325,6 +474,7 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     topic_prompt = (
         "You track brand visibility across AI tools like ChatGPT and Perplexity.\n\n"
+        + term_glossary
         + "BUSINESS CONTEXT:\n"
         + "Brand: " + brand_name + "\n"
         + "What they do: " + what_business_does + "\n"
@@ -415,6 +565,10 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
+    # Get resolved terms (computed during topic generation, reused here)
+    resolved_terms = brand_data.get("_resolved_terms", {})
+    term_glossary = build_term_glossary(resolved_terms)
+
     # Build context block
     if website_text:
         context_block = (
@@ -496,7 +650,8 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     prompt = (
         "You generate search prompts for AI visibility tracking.\n\n"
-        "Your job: write 5 prompts a REAL PERSON would type into ChatGPT "
+        + term_glossary
+        + "Your job: write 5 prompts a REAL PERSON would type into ChatGPT "
         "when looking for a " + solution_word + ".\n\n"
         "Context:\n"
         + context_block
