@@ -199,213 +199,208 @@ def fetch_brand_website(domain: str) -> str:
 
 def ai_generate_topics(brand_data: dict) -> list:
     """
-    Two-stage topic generation:
-    Stage 1 - Brand Intelligence: understand the brand deeply using available AI
-    Stage 2 - Topic Generation: generate realistic buyer search topics from that intelligence
-
-    Fully model-agnostic - uses _call_ai_for_json which works with any AI model.
-    When new models are added to the system, this function benefits automatically.
+    Three-phase topic generation - universal, works for any business.
+    Phase 1: Extract brand anchors deterministically from user data
+    Phase 2: AI understands the business deeply
+    Phase 3: Generate topics grounded in real brand terminology
     """
+    import json as _json
+
     business_type = brand_data.get("business_type", "")
-    products = ", ".join(brand_data.get("products", []))
-    customers = ", ".join(brand_data.get("customers", []))
-    key_features = ", ".join(brand_data.get("key_features", []))
+    products_list = brand_data.get("products", [])
+    customers_list = brand_data.get("customers", [])
+    features_list = brand_data.get("key_features", [])
+    competitors_list = brand_data.get("competitors", [])
     domain = brand_data.get("domain", "")
     brand_name = brand_data["name"]
     country = brand_data.get("country", "")
+    products = ", ".join(products_list)
+    customers = ", ".join(customers_list)
+    key_features = ", ".join(features_list)
 
-    # Website content - primary source of truth
     website_text = brand_data.get("_website_text", "")
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    # Build raw context from all available sources
-    raw_context = ""
-    if website_text:
-        raw_context += "WEBSITE CONTENT:\n" + website_text[:2000] + "\n\n"
-    raw_context += (
-        "Brand name: " + brand_name + "\n"
-        "Business type: " + business_type + "\n"
-        "What they offer: " + products + "\n"
-        "Who they serve: " + customers + "\n"
-        "Key differentiators: " + key_features + "\n"
-    )
+    # ── PHASE 1: Extract brand anchors from user data (no AI needed) ─────────
+    # Finds specific terms the brand actually uses — product names, vendor names,
+    # certification names, proprietary tool names. These become mandatory in topics.
+    COMMON_WORDS = {
+        "best", "tool", "tools", "software", "platform", "service", "services",
+        "company", "agency", "firm", "provider", "solution", "product", "team",
+        "based", "using", "user", "users", "data", "work", "free", "easy",
+        "simple", "fast", "high", "real", "time", "open", "source", "access",
+        "cost", "price", "need", "help", "make", "build", "track", "manage",
+        "create", "search", "find", "save", "with", "that", "this", "from",
+        "your", "their", "have", "will", "been", "more", "most", "very",
+        "over", "also", "only", "like", "just", "into", "than", "some",
+        "each", "such", "when", "where", "which", "what", "across", "through",
+        "without", "within", "between", "focused", "driven", "leading", "expert",
+        "award", "winning", "years", "since", "first", "content", "marketing",
+        "digital", "online", "growth", "brand", "brands", "business", "businesses",
+        "client", "clients", "results", "report", "strategy", "consulting",
+        "management", "support", "global", "local", "enterprise", "scalable",
+    }
 
-    # ── STAGE 1: Brand Intelligence ───────────────────────────────────────────
-    # Ask the AI to deeply understand the brand before generating topics.
-    # This is model-agnostic - works with GPT, Gemini, Claude, Groq, or any future model.
-    # The intelligence layer removes the need for keyword rules and mechanical filters.
-    # Include buyer insights from Step 1.5 if available
+    brand_anchors = []
+    for item in products_list + features_list:
+        item_clean = item.strip()
+        words = item_clean.split()
+        specific = [w for w in words if w.lower() not in COMMON_WORDS and len(w) >= 3]
+        if len(words) >= 2 and len(specific) >= 1 and any(len(w) >= 5 for w in specific):
+            brand_anchors.append(item_clean)
+        elif len(words) == 1 and len(item_clean) >= 4 and item_clean.lower() not in COMMON_WORDS:
+            brand_anchors.append(item_clean)
+
+    seen_lower = set()
+    unique_anchors = []
+    for a in sorted(brand_anchors, key=len, reverse=True):
+        if a.lower() not in seen_lower:
+            seen_lower.add(a.lower())
+            unique_anchors.append(a)
+    brand_anchors = unique_anchors[:10]
+
+    # ── PHASE 2: AI understands the business deeply ───────────────────────────
     buyer_insights = brand_data.get("_buyer_insights", [])
     buyer_insights_text = ""
     if buyer_insights:
-        buyer_insights_text = "\nDIRECT BUYER INSIGHTS (answers from the brand owner - highest priority):\n"
+        buyer_insights_text = "\nDIRECT BUYER INSIGHTS FROM BRAND OWNER:\n"
         for qa in buyer_insights:
-            buyer_insights_text += f"Q: {qa['question']}\nA: {qa['answer']}\n\n"
+            buyer_insights_text += "Q: " + qa["question"] + "\nA: " + qa["answer"] + "\n\n"
 
-    intelligence_prompt = (
-        "You are an AI visibility analyst. Read the brand information below carefully.\n\n"
-        + raw_context
-        + buyer_insights_text + "\n"
-        "Based on this, answer these 4 questions in JSON format:\n"
-        "{\n"
-        "  \"what_they_offer\": \"One sentence describing exactly what this brand offers in plain language\",\n"
-        "  \"exact_buyer\": \"One sentence describing the specific person who needs this, their role and situation\",\n"
-        "  \"buyer_search_intent\": \"What would this buyer type into an AI tool when they are ready to find and choose a solution like this one?\",\n"
-        "  \"unique_angle\": \"What makes this brand stand out from obvious alternatives in 1 sentence?\"\n"
-        "}\n\n"
-        "Be specific to THIS brand. Do not use generic category labels.\n"
-        "For example, not \'patent software\' but \'patent management software for startup founders who want to file without expensive counsel\'\n"
-        "Respond ONLY with valid JSON. No explanation, no markdown."
+    raw_context = ""
+    if website_text:
+        raw_context += "WEBSITE CONTENT:\n" + website_text[:2500] + "\n\n"
+    raw_context += (
+        "Brand: " + brand_name + "\n"
+        + "Business type: " + business_type + "\n"
+        + "Products/Services: " + products + "\n"
+        + "Target customers: " + customers + "\n"
+        + "Key differentiators: " + key_features + "\n"
+        + "Competitors: " + ", ".join(competitors_list) + "\n"
     )
 
-    brand_intelligence = {}
+    understanding_prompt = (
+        "Read this brand information and answer in JSON format.\n\n"
+        + raw_context
+        + buyer_insights_text
+        + "\nAnswer about THIS specific brand:\n"
+        + '{\n'
+        + '  "what_business_does": "One specific sentence. Use the brand own terminology from website.",\n'
+        + '  "exact_buyer": "Job title, company type, and problem they need solved.",\n'
+        + '  "buyer_searches": ["5 exact phrases buyer types into ChatGPT. Use brand product names. Start with best/top/which/who/compare."],\n'
+        + '  "business_category": "Single word: agency OR software OR platform OR firm OR provider OR training company"\n'
+        + '}\n\n'
+        + "CRITICAL: Use actual product and vendor names from the website.\n"
+        + "WRONG: best GEO agency. RIGHT: best agency for Generative Engine Optimization using BlueprintIQ\n"
+        + "WRONG: cybersecurity training. RIGHT: best authorized Palo Alto Networks training company\n"
+        + "Respond ONLY with valid JSON. No markdown."
+    )
+
+    brand_understanding = {}
     try:
-        intel_raw = _call_ai_for_json(intelligence_prompt)
-        parsed_intel = _parse_json_list(intel_raw)
-        if isinstance(parsed_intel, list) and len(parsed_intel) > 0:
-            brand_intelligence = parsed_intel[0] if isinstance(parsed_intel[0], dict) else {}
-        elif isinstance(intel_raw, str):
-            import json as _json
-            try:
-                brand_intelligence = _json.loads(intel_raw)
-            except Exception:
-                brand_intelligence = {}
+        raw_intel = _call_ai_for_json(understanding_prompt)
+        try:
+            brand_understanding = _json.loads(raw_intel)
+        except Exception:
+            parsed = _parse_json_list(raw_intel)
+            if parsed and isinstance(parsed[0], dict):
+                brand_understanding = parsed[0]
     except Exception:
-        brand_intelligence = {}
+        brand_understanding = {}
 
-    # Build enriched context from brand intelligence
-    if brand_intelligence:
-        enriched_context = (
-            "BRAND INTELLIGENCE (AI-generated understanding of this brand):\n"
-            + f"What they offer: {brand_intelligence.get('what_they_offer', '')}\n"
-            + f"Exact buyer: {brand_intelligence.get('exact_buyer', '')}\n"
-            + f"Buyer search intent: {brand_intelligence.get('buyer_search_intent', '')}\n"
-            + f"Unique angle: {brand_intelligence.get('unique_angle', '')}\n\n"
-            + "RAW BRAND DATA (supplement only):\n"
-            + raw_context
-        )
-    else:
-        enriched_context = raw_context
+    buyer_searches = brand_understanding.get("buyer_searches", [])
+    business_category = brand_understanding.get("business_category", "agency")
+    what_business_does = brand_understanding.get("what_business_does", "")
+    exact_buyer = brand_understanding.get("exact_buyer", "")
 
-    # Country context
-    country_note = f"User location: {country}\n" if country and country.lower() != "global" else ""
+    # ── PHASE 3: Generate topics grounded in brand anchors ────────────────────
+    country_note = ("User country: " + country + "\n") if country and country.lower() not in ["global", ""] else ""
     country_topic_note = (
-        f"- For 1 topic, add '{country}' to make it location-specific\n"
+        "- Include 1 topic with '" + country + "' for local search\n"
         if country and country.lower() not in ["global", "united states", ""] else ""
     )
+    anchor_list = "\n".join(("- " + a) for a in brand_anchors[:8]) if brand_anchors else "- (none extracted)"
+    buyer_search_list = "\n".join(("- " + s) for s in buyer_searches[:5]) if buyer_searches else ""
 
-    # ── STAGE 2: Topic Generation from Brand Intelligence ─────────────────────
-    # Topics are generated from genuine understanding, not keyword rules.
-    # Works for any brand type: software, agency, service, marketplace, etc.
     topic_prompt = (
-        "You track brand visibility across AI tools like ChatGPT, Perplexity, Claude, and Gemini.\n\n"
-        "Based on the brand intelligence below, generate 7 search topics that the EXACT BUYER "
-        "described would type into an AI tool when they are ready to find and choose a solution.\n\n"
-        + enriched_context
-        + country_note + "\n"
-        "RULES:\n"
-        "- Topics must be what the EXACT BUYER would search - not generic category searches\n"
-        "- Every topic must cause an AI to respond by naming specific brands or providers\n"
-        "- Do NOT generate informational, educational, or how-to topics\n"
-        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
-        "- Every topic must contain a category word: agency, agencies, firm, service, services, "
-        "tool, tools, software, platform, company, companies, provider, providers\n"
-        "- Use specific language from the brand intelligence above - not generic category labels\n"
-        "- Mix: 3 topics based on unique features/differentiators, 4 based on general buyer intent\n"
-        + country_topic_note +
-        "\nFor each topic also provide one sentence of buyer intent (why they search this).\n"
-        "Respond ONLY with a JSON array of 7 objects: "
-        "[{\"topic\": \"...\" , \"intent\": \"...\"}, ...]\n"
-        "No markdown, no explanation."
+        "You track brand visibility across AI tools like ChatGPT and Perplexity.\n\n"
+        + "BUSINESS CONTEXT:\n"
+        + "Brand: " + brand_name + "\n"
+        + "What they do: " + what_business_does + "\n"
+        + "Exact buyer: " + exact_buyer + "\n"
+        + "Business category: " + business_category + "\n"
+        + country_note
+        + "\nBRAND ANCHOR TERMS (at least 3 topics must include one of these):\n"
+        + anchor_list
+        + "\n\nBUYER SEARCH PHRASES (starting point for topics):\n"
+        + buyer_search_list
+        + "\n\nRAW BRAND DATA:\n"
+        + raw_context
+        + "\nGenerate 7 topics this exact buyer types into ChatGPT when ready to choose.\n\n"
+        + "MANDATORY RULES:\n"
+        + "1. At least 3 topics MUST include one of the BRAND ANCHOR TERMS above\n"
+        + "2. Start from BUYER SEARCH PHRASES then expand and vary them\n"
+        + "3. Every topic must make ChatGPT name specific brands in its answer\n"
+        + "4. Every topic needs a category word: " + business_category + ", agency, firm, service, software, platform\n"
+        + "5. No '" + brand_name + "' in any topic\n"
+        + "6. AVOID vague terms ChatGPT misinterprets:\n"
+        + "   BAD: 'GEO agency' alone (reads as Geographic). GOOD: 'best Generative Engine Optimization agency for SaaS'\n"
+        + "   BAD: 'cybersecurity training'. GOOD: 'best authorized Palo Alto Networks training company'\n"
+        + "7. Use real product names, vendor names, certification names from brand data above\n"
+        + "8. No educational or how-to topics\n"
+        + country_topic_note
+        + "\nFor each topic include one sentence of buyer intent.\n"
+        + 'Respond ONLY with JSON array: [{"topic": "...", "intent": "..."}, ...]\n'
+        + "No markdown, no explanation."
     )
+
     raw = _call_ai_for_json(topic_prompt)
     parsed_raw = _parse_json_list(raw)
     brand_lower = brand_name.lower()
     topics = []
     topic_intents = {}
+
     for item in parsed_raw:
         if isinstance(item, dict):
-            t = item.get("topic", item.get("name", "")).strip()
-            intent = item.get("intent", item.get("reason", "")).strip()
+            t = item.get("topic", "").strip()
+            intent = item.get("intent", "").strip()
             if t:
                 topics.append(t)
                 if intent:
                     topic_intents[t] = intent
         elif isinstance(item, str) and item.strip():
             topics.append(item.strip())
-    # Store intents in session state for display
+
     if "brand_data" in st.session_state:
         st.session_state.brand_data["_topic_intents"] = topic_intents
 
-    # ── Niche anchor check ───────────────────────────────────────────────────
-    # If the brand's key features contain specific niche terms (patent, legal, medical etc.)
-    # then every topic must also contain at least one of those niche terms.
-    # This prevents topics like "idea capture tools" when the brand is about "patent idea capture"
-    # Fully dynamic - derived from user's own key features and products
-
-    niche_keywords = set()
-    all_brand_text = (products + " " + key_features + " " + " ".join(bd.get("products", [])) if "bd" in dir() else products + " " + key_features).lower()
-
-    # Extract meaningful niche words (3+ chars, not common stopwords)
-    stopwords = {"and", "the", "for", "with", "our", "not", "from", "that", "this",
-                 "are", "was", "has", "have", "will", "been", "your", "their", "its"}
-    for word in all_brand_text.split():
-        word = word.strip(".,;:()-/")
-        if len(word) >= 4 and word not in stopwords:
-            niche_keywords.add(word)
-
-    # Keep only words that are truly niche-specific (appear in features but not common English)
-    common_english = {"best", "tool", "tools", "software", "platform", "service", "company",
-                      "based", "using", "user", "users", "data", "team", "teams", "work",
-                      "free", "easy", "simple", "fast", "high", "real", "time", "open",
-                      "source", "access", "cost", "price", "need", "help", "make", "build",
-                      "track", "manage", "capture", "create", "search", "find", "save"}
-    niche_keywords = niche_keywords - common_english
-
-    def _topic_has_niche_context(topic_text, niche_kws):
-        """Check if topic contains at least one niche keyword from the brand's space."""
-        if not niche_kws:
-            return True  # No specific niche detected, skip check
-        topic_lower = topic_text.lower()
-        return any(kw in topic_lower for kw in niche_kws)
-
-    # Filter out topics that are too vague or likely to produce wrong results
-    # These are patterns that make ChatGPT give generic advice instead of brand names
-    # Works for any industry - just checking for structural/intent issues
     bad_patterns = [
         "strategies", "tips", "how to", "examples", "guide", "tutorial",
-        "best practices", "introduction", "overview", "explained", "meaning",
-        "definition", "what is", "benefits of", "advantages of",
-    ]
-    # Standalone vague nouns that only work when combined with agency/firm/service
-    vague_standalone = [
-        "providers", "solutions", "platforms", "consultants", "consultancies",
-        "writing services", "content writing", "writing service"
+        "best practices", "introduction", "overview", "explained",
+        "what is", "benefits of", "advantages of",
     ]
 
     filtered = []
     for t in topics:
         t = t.strip()
-        if not t:
+        if not t or brand_lower in t.lower():
             continue
-        if brand_lower in t.lower():
-            continue
-        t_lower = t.lower()
-        # Skip if contains bad educational/informational patterns
-        if any(bp in t_lower for bp in bad_patterns):
-            continue
-        # Skip vague standalone nouns unless paired with agency/firm/service/company
-        has_vague = any(v in t_lower for v in vague_standalone)
-        has_anchor = any(a in t_lower for a in ["agency", "agencies", "firm", "firms", "service", "services", "company", "companies"])
-        if has_vague and not has_anchor:
-            continue
-        # Skip topics that lost niche context (e.g. "idea capture tools" when brand is patent-focused)
-        if not _topic_has_niche_context(t, niche_keywords):
+        if any(bp in t.lower() for bp in bad_patterns):
             continue
         filtered.append(t)
 
+    # Fallback: if too few topics survived, build directly from anchors
+    if len(filtered) < 3 and brand_anchors:
+        for anchor in brand_anchors[:5]:
+            fallback = "best " + anchor + " " + business_category
+            if brand_lower not in fallback.lower() and fallback not in filtered:
+                filtered.append(fallback)
+            if len(filtered) >= 5:
+                break
+
     return filtered[:5]
+
 
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
@@ -1627,7 +1622,7 @@ elif st.session_state.step == 4:
             tool_responses = run_selected_tools(q["query"], active_tools, country=bd.get("country", ""))
 
             for tool_name, raw_response in tool_responses.items():
-                # Handle dict format (web search) and plain string
+                # Handle dict (web search) and plain string responses
                 if isinstance(raw_response, dict):
                     response_text = raw_response.get("text", "") or ""
                     web_sources = raw_response.get("sources", [])
@@ -1637,7 +1632,7 @@ elif st.session_state.step == 4:
                     web_sources = []
                     web_searched = False
 
-                # Auto-retry once on empty response — catches transient web search failures
+                # Auto-retry once on empty response
                 if not response_text.strip() or len(response_text.strip()) < 30:
                     import time as _time
                     _time.sleep(3)
@@ -1674,7 +1669,6 @@ elif st.session_state.step == 4:
                     b for b in brand_data_detected.get("all_brands", [])
                     if not is_false_positive_brand(b)
                 ]
-
                 linked_sites = web_sources if web_sources else extract_linked_sites(response_text)
 
                 all_results.append({
@@ -1694,21 +1688,14 @@ elif st.session_state.step == 4:
                 live_log.append({
                     "prompt": q["query"][:70] + ("..." if len(q["query"]) > 70 else ""),
                     "model": tool_name,
-                    "detected": mentioned,
-                    "web": web_searched,
-                    "sources": len(web_sources)
+                    "detected": mentioned
                 })
                 feed_lines = []
-                for log in live_log[-8:]:
+                for log in live_log[-8:]:  # Show last 8 entries
                     icon = "✅" if log["detected"] else "⚪"
-                    if log.get("web") and log.get("sources", 0) > 0:
-                        web_tag = f" 🌐({log['sources']})"
-                    elif log.get("web"):
-                        web_tag = " 🌐"
-                    else:
-                        web_tag = " 📚"
-                    feed_lines.append(f"{icon} **{log['model']}**{web_tag} — {log['prompt']}")
+                    feed_lines.append(f"{icon} **{log['model']}** — {log['prompt']}")
                 live_feed.markdown("**Live Results:**\n" + "\n".join(feed_lines))
+
                 call_count += 1
                 progress_bar.progress(min(call_count / total_calls, 1.0))
 
@@ -1940,18 +1927,12 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Web sources
+                                # Linked sites
                                 linked = r.get("linked_sites", [])
-                                web_searched_r = r.get("web_searched", False)
-                                src_count = len(linked)
-                                if web_searched_r and src_count > 0:
-                                    st.markdown(f"🌐 **Web searched** · 📎 **{src_count} source{'s' if src_count != 1 else ''} used**")
-                                elif web_searched_r:
-                                    st.markdown("🌐 **Web searched**")
-                                exp_label = (f"✅ View AI Response + {src_count} sources (brand found)" if mentioned and src_count > 0
-                                             else f"✅ View AI Response (brand found)" if mentioned
-                                             else f"View AI Response + {src_count} sources" if src_count > 0
-                                             else "View AI Response")
+                                if linked:
+                                    st.caption("**Linked Sites:**")
+                                    link_rows = [{"#": s["rank"], "Domain": s["domain"], "URL": s["url"]} for s in linked]
+                                    st.dataframe(pd.DataFrame(link_rows), use_container_width=True, hide_index=True)
 
                                 # AI Response - highlighted brand mentions
                                 response = r.get("response", "")
@@ -1989,42 +1970,23 @@ elif st.session_state.step == 4:
             government_bodies = scores.get("government_bodies", [])
             total_q = scores["total_queries_run"]
 
-            # ── Competitor visibility table (no tabs) ─────────────────────
+            # ── Competitor visibility (no tabs, clean table) ──────────────
             user_competitors = bd.get("competitors", [])
             detected_names_map = {b.lower(): c for b, c in real_competitors}
-
-            comp_rows = []
-            # Your brand first
-            comp_rows.append({
-                "Brand": f"🎯 {brand_name} (You)",
-                "AI Mentions": scores["total_mentions"],
-                "Visibility": f"{scores['overall_citation_share']}%",
-                "Status": "Your Brand"
-            })
-            # User-entered competitors
+            comp_rows = [{"Brand": f"🎯 {brand_name} (You)", "AI Mentions": scores["total_mentions"],
+                          "Visibility": f"{scores['overall_citation_share']}%", "Status": "Your Brand"}]
             for comp in user_competitors:
                 mentions = detected_names_map.get(comp.lower(), 0)
                 pct = round((mentions / total_q) * 100) if total_q > 0 else 0
-                comp_rows.append({
-                    "Brand": comp,
-                    "AI Mentions": mentions,
-                    "Visibility": f"{pct}%",
-                    "Status": "✅ Detected" if mentions > 0 else "⚪ Not mentioned"
-                })
-            # Also-detected competitors not in user list
-            user_lower = [c.lower() for c in user_competitors]
+                comp_rows.append({"Brand": comp, "AI Mentions": mentions,
+                                  "Visibility": f"{pct}%",
+                                  "Status": "✅ Detected" if mentions > 0 else "⚪ Not mentioned"})
             for brand_c, count in real_competitors[:8]:
-                if brand_c.lower() not in user_lower and brand_c.lower() != brand_name.lower():
+                if brand_c.lower() not in [c.lower() for c in user_competitors] and brand_c.lower() != brand_name.lower():
                     pct = round((count / total_q) * 100) if total_q > 0 else 0
-                    comp_rows.append({
-                        "Brand": brand_c,
-                        "AI Mentions": count,
-                        "Visibility": f"{pct}%",
-                        "Status": "Also detected"
-                    })
-
-            if comp_rows:
-                st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
+                    comp_rows.append({"Brand": brand_c, "AI Mentions": count,
+                                      "Visibility": f"{pct}%", "Status": "Also detected"})
+            st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
 
             # ── Brand mention context ────────────────────────────────────
             st.subheader("How Your Brand Was Mentioned")
