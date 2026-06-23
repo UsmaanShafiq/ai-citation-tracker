@@ -231,78 +231,62 @@ def ai_generate_topics(brand_data: dict) -> list:
         "Key differentiators: " + key_features + "\n"
     )
 
-    # ── STAGE 1: Simulate Buyer Search Behavior ─────────────────────────────
-    # Core insight: instead of asking "what does this brand do?", we ask the AI
-    # to think like the actual buyer and generate the exact phrases they type.
-    # This eliminates keyword rules entirely. Works for any brand in any industry.
-    # Model-agnostic: GPT, Gemini, Claude, or any future model via _call_ai_for_json.
-
+    # ── STAGE 1: Brand Intelligence ───────────────────────────────────────────
+    # Ask the AI to deeply understand the brand before generating topics.
+    # This is model-agnostic - works with GPT, Gemini, Claude, Groq, or any future model.
+    # The intelligence layer removes the need for keyword rules and mechanical filters.
+    # Include buyer insights from Step 1.5 if available
     buyer_insights = brand_data.get("_buyer_insights", [])
     buyer_insights_text = ""
     if buyer_insights:
-        buyer_insights_text = "\nDIRECT ANSWERS FROM THE BRAND OWNER (highest priority):\n"
+        buyer_insights_text = "\nDIRECT BUYER INSIGHTS (answers from the brand owner - highest priority):\n"
         for qa in buyer_insights:
             buyer_insights_text += f"Q: {qa['question']}\nA: {qa['answer']}\n\n"
 
     intelligence_prompt = (
-        "You are simulating the search behavior of a real buyer for this brand.\n\n"
-        "Read all the information below very carefully:\n\n"
+        "You are an AI visibility analyst. Read the brand information below carefully.\n\n"
         + raw_context
         + buyer_insights_text + "\n"
-        "Think deeply: who buys from this brand, and what exact words do they type into "
-        "ChatGPT or Google when they are ready to find and choose a solution like this one?\n\n"
-        "Generate a buyer search intelligence report in this exact JSON format:\n"
+        "Based on this, answer these 4 questions in JSON format:\n"
         "{\n"
-        "  \"buyer_profile\": \"Who is the exact buyer — role, company type, problem they solve\",\n"
-        "  \"search_phrases\": [\"phrase1\", \"phrase2\", \"phrase3\", \"phrase4\", \"phrase5\"],\n"
-        "  \"category_word\": \"single word buyers use for this solution type (agency/software/platform/firm/provider/etc)\",\n"
-        "  \"avoid_words\": [\"words that attract wrong category of results\"]\n"
+        "  \"what_they_offer\": \"One sentence describing exactly what this brand offers in plain language\",\n"
+        "  \"exact_buyer\": \"One sentence describing the specific person who needs this, their role and situation\",\n"
+        "  \"buyer_search_intent\": \"What would this buyer type into an AI tool when they are ready to find and choose a solution like this one?\",\n"
+        "  \"unique_angle\": \"What makes this brand stand out from obvious alternatives in 1 sentence?\"\n"
         "}\n\n"
-        "RULES for search_phrases:\n"
-        "- These must be the EXACT words a real buyer types — not marketing language\n"
-        "- Use the brand's actual vendor names, product names, certification names from the content\n"
-        "- Do NOT invent terms not mentioned in the brand information above\n"
-        "- Each phrase: 3-8 words, starts with best/top/which/who offers/compare\n"
-        "- Must be specific enough that an AI would name specific brands in its answer\n\n"
-        "Example for an authorized Juniper training company:\n"
-        "search_phrases: ['best authorized Juniper Networks training company', "
-        "'Palo Alto Networks ATP training providers', "
-        "'Fortinet NSE certification training companies', "
-        "'which companies offer Juniper JNCIA bootcamp', "
-        "'authorized networking certification training partners']\n\n"
-        "Respond ONLY with valid JSON. No markdown, no explanation."
+        "Be specific to THIS brand. Do not use generic category labels.\n"
+        "For example, not \'patent software\' but \'patent management software for startup founders who want to file without expensive counsel\'\n"
+        "Respond ONLY with valid JSON. No explanation, no markdown."
     )
 
     brand_intelligence = {}
     try:
-        import json as _json
         intel_raw = _call_ai_for_json(intelligence_prompt)
-        try:
-            brand_intelligence = _json.loads(intel_raw)
-        except Exception:
-            parsed_intel = _parse_json_list(intel_raw)
-            if isinstance(parsed_intel, list) and len(parsed_intel) > 0:
-                brand_intelligence = parsed_intel[0] if isinstance(parsed_intel[0], dict) else {}
+        parsed_intel = _parse_json_list(intel_raw)
+        if isinstance(parsed_intel, list) and len(parsed_intel) > 0:
+            brand_intelligence = parsed_intel[0] if isinstance(parsed_intel[0], dict) else {}
+        elif isinstance(intel_raw, str):
+            import json as _json
+            try:
+                brand_intelligence = _json.loads(intel_raw)
+            except Exception:
+                brand_intelligence = {}
     except Exception:
         brand_intelligence = {}
 
-    simulated_searches = brand_intelligence.get("search_phrases", [])
-    category_word = brand_intelligence.get("category_word", "")
-    avoid_words = brand_intelligence.get("avoid_words", [])
-    buyer_profile = brand_intelligence.get("buyer_profile", "")
-
-    # Build enriched context from simulation results
-    enriched_context = ""
-    if buyer_profile:
-        enriched_context += f"BUYER PROFILE: {buyer_profile}\n\n"
-    if simulated_searches:
-        enriched_context += "SIMULATED BUYER SEARCHES (use as foundation for topics):\n"
-        for phrase in simulated_searches:
-            enriched_context += f"- {phrase}\n"
-        enriched_context += "\n"
-    if category_word:
-        enriched_context += f"CATEGORY WORD buyers use: {category_word}\n\n"
-    enriched_context += "RAW BRAND DATA:\n" + raw_context
+    # Build enriched context from brand intelligence
+    if brand_intelligence:
+        enriched_context = (
+            "BRAND INTELLIGENCE (AI-generated understanding of this brand):\n"
+            + f"What they offer: {brand_intelligence.get('what_they_offer', '')}\n"
+            + f"Exact buyer: {brand_intelligence.get('exact_buyer', '')}\n"
+            + f"Buyer search intent: {brand_intelligence.get('buyer_search_intent', '')}\n"
+            + f"Unique angle: {brand_intelligence.get('unique_angle', '')}\n\n"
+            + "RAW BRAND DATA (supplement only):\n"
+            + raw_context
+        )
+    else:
+        enriched_context = raw_context
 
     # Country context
     country_note = f"User location: {country}\n" if country and country.lower() != "global" else ""
@@ -311,28 +295,26 @@ def ai_generate_topics(brand_data: dict) -> list:
         if country and country.lower() not in ["global", "united states", ""] else ""
     )
 
-    # ── STAGE 2: Expand and Validate Buyer Searches into Topics ────────────────
-    # The simulated buyer searches from Stage 1 become the foundation.
-    # We expand them to 7 varied topics covering different search angles.
-    # No keyword rules needed — the AI already knows what buyers search for.
-
+    # ── STAGE 2: Topic Generation from Brand Intelligence ─────────────────────
+    # Topics are generated from genuine understanding, not keyword rules.
+    # Works for any brand type: software, agency, service, marketplace, etc.
     topic_prompt = (
         "You track brand visibility across AI tools like ChatGPT, Perplexity, Claude, and Gemini.\n\n"
+        "Based on the brand intelligence below, generate 7 search topics that the EXACT BUYER "
+        "described would type into an AI tool when they are ready to find and choose a solution.\n\n"
         + enriched_context
         + country_note + "\n"
-        "Using the buyer profile and simulated searches above as your foundation, "
-        "generate 7 topics that this exact buyer would type into an AI tool.\n\n"
         "RULES:\n"
-        "- Start from the SIMULATED BUYER SEARCHES above — expand and vary them\n"
-        "- Every topic must make an AI name specific brands, companies, or providers\n"
-        "- Do NOT generate educational, how-to, or informational topics\n"
-        "- Do NOT include '" + brand_name + "' in any topic\n"
-        "- Use the exact vendor names, product names, certification names from the brand data\n"
-        "- Use the category word buyers actually use (from CATEGORY WORD above)\n"
-        "- Do NOT invent terms or add qualifiers not present in the brand information\n"
-        "- Vary the angles: direct search, vendor-specific, comparison, use-case, audience-specific\n"
+        "- Topics must be what the EXACT BUYER would search - not generic category searches\n"
+        "- Every topic must cause an AI to respond by naming specific brands or providers\n"
+        "- Do NOT generate informational, educational, or how-to topics\n"
+        "- Do NOT include the brand name '" + brand_name + "' in any topic\n"
+        "- Every topic must contain a category word: agency, agencies, firm, service, services, "
+        "tool, tools, software, platform, company, companies, provider, providers\n"
+        "- Use specific language from the brand intelligence above - not generic category labels\n"
+        "- Mix: 3 topics based on unique features/differentiators, 4 based on general buyer intent\n"
         + country_topic_note +
-        "\nFor each topic provide one sentence of buyer intent.\n"
+        "\nFor each topic also provide one sentence of buyer intent (why they search this).\n"
         "Respond ONLY with a JSON array of 7 objects: "
         "[{\"topic\": \"...\" , \"intent\": \"...\"}, ...]\n"
         "No markdown, no explanation."
@@ -564,8 +546,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "top", "best", "leading", "agency", "agencies", "firm", "firms",
         "company", "companies", "tool", "tools", "software", "platform",
         "service provider", "vendor", "who do you", "any suggestions",
-        "what do you", "which one", "who offers",
-        "ai-powered", "ai-assisted", "ai powered", "ai assisted"
+        "what do you", "which one", "who offers"
     ]
 
     # Words that indicate a statement (not a question) with no brand ask
@@ -635,21 +616,11 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     # First attempt
     raw = _call_ai_for_json(prompt)
     prompts = _parse_json_list(raw)
-
-    # Topic as prompt 1 must start with "best" or "top" to force brand recommendations
-    # Bare noun phrases like "AI-powered invention disclosure software" return definitions
-    # "best AI-powered invention disclosure software" returns actual brand names
-    topic_as_prompt = topic
-    topic_lower_check = topic.lower().strip()
-    if not any(topic_lower_check.startswith(w) for w in
-               ["best ", "top ", "which ", "what ", "who ", "compare", "how does", "is there"]):
-        topic_as_prompt = "best " + topic
-
-    result = [topic_as_prompt] + process_raw(prompts)
+    result = [topic] + process_raw(prompts)
 
     # Add country variant if needed and not US
     if country_suffix and len(result) < 5:
-        location_prompt = topic_as_prompt + country_suffix
+        location_prompt = topic + country_suffix
         if location_prompt.lower() not in [r.lower() for r in result]:
             result.append(location_prompt)
 
@@ -1653,18 +1624,36 @@ elif st.session_state.step == 4:
                 st.warning("All tools rate-limited. Stopping early.")
                 break
 
-            tool_responses = run_selected_tools(q["query"], active_tools)
+            tool_responses = run_selected_tools(q["query"], active_tools, country=bd.get("country", ""))
 
             for tool_name, raw_response in tool_responses.items():
-                # Handle both dict format (web search tools) and plain string
+                # Handle dict format (web search) and plain string
                 if isinstance(raw_response, dict):
                     response_text = raw_response.get("text", "") or ""
                     web_sources = raw_response.get("sources", [])
                     web_searched = raw_response.get("web_searched", False)
                 else:
-                    response_text = raw_response or ""
+                    response_text = str(raw_response) if raw_response else ""
                     web_sources = []
                     web_searched = False
+
+                # Auto-retry once on empty response — catches transient web search failures
+                if not response_text.strip() or len(response_text.strip()) < 30:
+                    import time as _time
+                    _time.sleep(3)
+                    retry_resp = run_selected_tools(q["query"], [tool_name], country=bd.get("country", ""))
+                    retry_raw = retry_resp.get(tool_name, "")
+                    if isinstance(retry_raw, dict):
+                        response_text = retry_raw.get("text", "") or ""
+                        web_sources = retry_raw.get("sources", [])
+                        web_searched = retry_raw.get("web_searched", False)
+                    elif retry_raw:
+                        response_text = str(retry_raw)
+
+                if not response_text.strip():
+                    call_count += 1
+                    progress_bar.progress(min(call_count / total_calls, 1.0))
+                    continue
 
                 if response_text.startswith("ERROR"):
                     clean_error = response_text.split("ERROR:", 1)[-1].strip()
@@ -1681,7 +1670,6 @@ elif st.session_state.step == 4:
                     business_type=detected_business_type,
                     user_competitors=competitors_list
                 )
-                # Filter false positive brand names from results
                 brand_data_detected["all_brands"] = [
                     b for b in brand_data_detected.get("all_brands", [])
                     if not is_false_positive_brand(b)
@@ -1714,7 +1702,7 @@ elif st.session_state.step == 4:
                 for log in live_log[-8:]:
                     icon = "✅" if log["detected"] else "⚪"
                     if log.get("web") and log.get("sources", 0) > 0:
-                        web_tag = f" 🌐 ({log['sources']} sources)"
+                        web_tag = f" 🌐({log['sources']})"
                     elif log.get("web"):
                         web_tag = " 🌐"
                     else:
@@ -1947,62 +1935,28 @@ elif st.session_state.step == 4:
                                 context = r["brands_detected"]["target_context"]
                                 position = r["brands_detected"]["target_position"]
 
-                                # Final safety check — verify brand actually appears in response text
-                                # This catches cases where brand_detector LLM hallucinated a mention
-                                _resp_check = r.get("response", "")
-                                import re as _re2
-                                _brand_in_text = bool(_re2.search(
-                                    r'' + _re2.escape(brand_name) + r'',
-                                    _resp_check, _re2.IGNORECASE
-                                ))
-                                if mentioned and not _brand_in_text:
-                                    mentioned = False  # Override false positive
-
                                 if mentioned:
                                     st.success(f"Brand mentioned | Context: {context} | Position: #{position}")
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Web sources — show count outside expander, full list inside
+                                # Web sources
                                 linked = r.get("linked_sites", [])
                                 web_searched_r = r.get("web_searched", False)
                                 src_count = len(linked)
-
-                                # Source count badge — always visible without clicking
                                 if web_searched_r and src_count > 0:
-                                    st.markdown(
-                                        f"🌐 **Web searched** &nbsp;·&nbsp; "
-                                        f"📎 **{src_count} source{'s' if src_count != 1 else ''} used**",
-                                    )
+                                    st.markdown(f"🌐 **Web searched** · 📎 **{src_count} source{'s' if src_count != 1 else ''} used**")
                                 elif web_searched_r:
-                                    st.markdown("🌐 **Web searched** &nbsp;·&nbsp; no sources extracted")
+                                    st.markdown("🌐 **Web searched**")
+                                exp_label = (f"✅ View AI Response + {src_count} sources (brand found)" if mentioned and src_count > 0
+                                             else f"✅ View AI Response (brand found)" if mentioned
+                                             else f"View AI Response + {src_count} sources" if src_count > 0
+                                             else "View AI Response")
 
-                                # AI Response expander — sources shown inside
+                                # AI Response - highlighted brand mentions
                                 response = r.get("response", "")
-                                if web_searched_r and src_count > 0:
-                                    exp_label = (f"✅ View AI Response + {src_count} sources (brand found)"
-                                                 if mentioned else f"View AI Response + {src_count} sources")
-                                else:
-                                    exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
+                                exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
                                 with st.expander(exp_label):
-                                    # Sources inside expander
-                                    if web_searched_r and linked:
-                                        st.markdown("**🌐 Web Sources Used**")
-                                        st.caption("Response grounded in live web search — same as ChatGPT web interface.")
-                                        for s in linked[:8]:
-                                            title = s.get("title") or s.get("domain", "Source")
-                                            url = s.get("url", "")
-                                            domain = s.get("domain", "")
-                                            if url:
-                                                st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
-                                        st.divider()
-                                    elif linked:
-                                        for s in linked[:5]:
-                                            url = s.get("url", "")
-                                            domain = s.get("domain", url)
-                                            if url:
-                                                st.markdown(f"&nbsp;&nbsp;🔗 [{domain}]({url})")
-                                        st.divider()
                                     if response:
                                         # Highlight all variants of brand name
                                         import re as _re
@@ -2035,63 +1989,42 @@ elif st.session_state.step == 4:
             government_bodies = scores.get("government_bodies", [])
             total_q = scores["total_queries_run"]
 
-            tab1, tab2, tab3 = st.tabs([
-                f"Direct Competitors ({len(real_competitors)})",
-                f"Dominant Platforms ({len(dominant_platforms)})",
-                f"Government / Official Bodies ({len(government_bodies)})"
-            ])
+            # ── Competitor visibility table (no tabs) ─────────────────────
+            user_competitors = bd.get("competitors", [])
+            detected_names_map = {b.lower(): c for b, c in real_competitors}
 
-            with tab1:
-                st.caption("Commercial tools and services at a similar scale to yours — your real competition.")
+            comp_rows = []
+            # Your brand first
+            comp_rows.append({
+                "Brand": f"🎯 {brand_name} (You)",
+                "AI Mentions": scores["total_mentions"],
+                "Visibility": f"{scores['overall_citation_share']}%",
+                "Status": "Your Brand"
+            })
+            # User-entered competitors
+            for comp in user_competitors:
+                mentions = detected_names_map.get(comp.lower(), 0)
+                pct = round((mentions / total_q) * 100) if total_q > 0 else 0
+                comp_rows.append({
+                    "Brand": comp,
+                    "AI Mentions": mentions,
+                    "Visibility": f"{pct}%",
+                    "Status": "✅ Detected" if mentions > 0 else "⚪ Not mentioned"
+                })
+            # Also-detected competitors not in user list
+            user_lower = [c.lower() for c in user_competitors]
+            for brand_c, count in real_competitors[:8]:
+                if brand_c.lower() not in user_lower and brand_c.lower() != brand_name.lower():
+                    pct = round((count / total_q) * 100) if total_q > 0 else 0
+                    comp_rows.append({
+                        "Brand": brand_c,
+                        "AI Mentions": count,
+                        "Visibility": f"{pct}%",
+                        "Status": "Also detected"
+                    })
 
-                # Always show user-entered competitors even if not detected
-                # This gives them a 0% visibility baseline which is useful data
-                user_competitors = bd.get("competitors", [])
-                detected_names = [b.lower() for b, _ in real_competitors]
-
-                # Add any user competitors that were not detected with 0 mentions
-                zero_mention_competitors = [
-                    (comp, 0) for comp in user_competitors
-                    if comp.strip() and comp.strip().lower() not in detected_names
-                ]
-
-                all_competitors_display = list(real_competitors[:20]) + zero_mention_competitors
-
-                if all_competitors_display:
-                    comp_df = pd.DataFrame(all_competitors_display, columns=["Brand", "Mentions"])
-                    comp_df["Appearance Rate"] = comp_df["Mentions"].apply(
-                        lambda x: f"{round((x / total_q) * 100)}%" if total_q > 0 else "0%"
-                    )
-                    comp_df["Status"] = comp_df["Mentions"].apply(
-                        lambda x: "✅ Detected" if x > 0 else "⚪ Not mentioned"
-                    )
-                    st.dataframe(comp_df, use_container_width=True, hide_index=True)
-                    if zero_mention_competitors:
-                        st.caption(f"⚪ {len(zero_mention_competitors)} competitor(s) you entered were not mentioned by AI in this run.")
-                else:
-                    st.info("No direct competitors detected. Add known competitors in Step 1 for better tracking.")
-
-            with tab2:
-                st.caption("Large established commercial platforms. These dominate AI responses but are not your direct competition.")
-                if dominant_platforms:
-                    dom_df = pd.DataFrame(
-                        [(b, c, f"{r}%") for b, c, r in dominant_platforms[:15]],
-                        columns=["Brand", "Mentions", "Appearance Rate"]
-                    )
-                    st.dataframe(dom_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No dominant platforms detected.")
-
-            with tab3:
-                st.caption("Government agencies, regulatory bodies, and official databases. These appear as authoritative references, not competitors.")
-                if government_bodies:
-                    gov_df = pd.DataFrame(
-                        [(b, c, f"{r}%") for b, c, r in government_bodies[:15]],
-                        columns=["Organization", "Mentions", "Appearance Rate"]
-                    )
-                    st.dataframe(gov_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No government or official bodies detected.")
+            if comp_rows:
+                st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
 
             # ── Brand mention context ────────────────────────────────────
             st.subheader("How Your Brand Was Mentioned")
