@@ -199,25 +199,12 @@ def fetch_brand_website(domain: str) -> str:
 
 def resolve_brand_terms(brand_data: dict) -> dict:
     """
-    Context-aware term resolver. Reads the brand's website and form data,
-    identifies any ambiguous abbreviations or new industry terms, and resolves
-    them to their full meaning based on the brand's actual context.
-
-    Works universally for any brand in any industry — no hardcoding.
-    Returns a dict of {abbreviation: full_meaning} resolved for THIS brand.
-
-    Examples:
-      Siege Media website → GEO = "Generative Engine Optimization"
-      Real estate site   → GEO = "geographic targeting"
-      InspireIP website  → IP  = "Intellectual Property"
-      Network IT site    → IP  = "Internet Protocol"
-
-    The resolved glossary is injected into every topic and prompt generation
-    call so the AI never misreads an abbreviation.
+    Context-aware term resolver. Reads website + form data, identifies ambiguous
+    abbreviations, and resolves them to their correct meaning for THIS brand.
+    Runs once per session, result cached in brand_data["_resolved_terms"].
     """
     import json as _json
 
-    # If already resolved this session, return cached result
     cached = brand_data.get("_resolved_terms", {})
     if cached:
         return cached
@@ -229,8 +216,6 @@ def resolve_brand_terms(brand_data: dict) -> dict:
     business_type = brand_data.get("business_type", "")
     brand_name = brand_data.get("name", "")
 
-    # ── Known ambiguous terms that ChatGPT consistently misreads ─────────────
-    # Each entry has multiple possible meanings — context decides which one.
     AMBIGUOUS_TERMS = {
         "GEO": ["Generative Engine Optimization (marketing)", "Geographic / Geospatial"],
         "LLM": ["Large Language Model (AI)", "Master of Laws (legal degree)"],
@@ -240,7 +225,7 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         "AR": ["Augmented Reality", "Accounts Receivable"],
         "NLP": ["Natural Language Processing", "No List Price"],
         "AEO": ["Answer Engine Optimization", "Account Executive Operations"],
-        "LLMO": ["Large Language Model Optimization", "unknown"],
+        "LLMO": ["Large Language Model Optimization", "other"],
         "SEO": ["Search Engine Optimization", "Securities and Exchange Organization"],
         "CRO": ["Conversion Rate Optimization", "Chief Revenue Officer"],
         "GTM": ["Go-To-Market strategy", "Google Tag Manager"],
@@ -248,16 +233,16 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         "PPC": ["Pay Per Click advertising", "Power PC"],
         "ATP": ["Authorized Training Partner", "Adenosine Triphosphate (biology)"],
         "NSE": ["Network Security Expert (Fortinet certification)", "National Stock Exchange"],
-        "JNCIA": ["Juniper Networks Certified Internet Associate", "unknown"],
+        "JNCIA": ["Juniper Networks Certified Internet Associate", "other"],
         "CDP": ["Customer Data Platform", "Continuing Development Programme"],
         "CMS": ["Content Management System", "Centers for Medicare Services"],
-        "API": ["Application Programming Interface", "unknown"],
-        "SDK": ["Software Development Kit", "unknown"],
-        "SLA": ["Service Level Agreement", "unknown"],
-        "ROI": ["Return on Investment", "unknown"],
+        "ROI": ["Return on Investment", "other"],
+        "SLA": ["Service Level Agreement", "other"],
+        "DTC": ["Direct to Consumer", "other"],
+        "B2B": ["Business to Business", "other"],
+        "B2C": ["Business to Consumer", "other"],
     }
 
-    # Build context for the resolver
     brand_context = ""
     if website_text:
         brand_context += "WEBSITE CONTENT:\n" + website_text[:2000] + "\n\n"
@@ -269,7 +254,6 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         "Key features: " + key_features + "\n"
     )
 
-    # Only check terms that actually appear in the brand's context
     all_brand_text = (brand_context + products + " " + key_features).upper()
     terms_to_check = {
         term: meanings for term, meanings in AMBIGUOUS_TERMS.items()
@@ -277,13 +261,11 @@ def resolve_brand_terms(brand_data: dict) -> dict:
     }
 
     if not terms_to_check:
-        # No ambiguous terms found — return empty dict (nothing to resolve)
         brand_data["_resolved_terms"] = {}
         return {}
 
-    # Build the resolver prompt
     terms_list = "\n".join(
-        f"- {term}: could mean {' OR '.join(meanings)}"
+        "- " + term + ": could mean " + " OR ".join(meanings)
         for term, meanings in terms_to_check.items()
     )
 
@@ -291,19 +273,17 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         "You are resolving abbreviations for a brand based on their website and business context.\n\n"
         "BRAND CONTEXT:\n"
         + brand_context
-        + "\nAMBIGUOUS TERMS FOUND IN THIS BRAND'S DATA:\n"
+        + "\nAMBIGUOUS TERMS FOUND IN THIS BRAND DATA:\n"
         + terms_list
-        + "\n\nFor each term above, decide which meaning applies to THIS specific brand "
-        "based on their website content and business context.\n\n"
-        "Return ONLY a JSON object:\n"
-        '{"TERM": "full expanded meaning for this brand", ...}\n\n'
-        "Example for a marketing agency:\n"
-        '{"GEO": "Generative Engine Optimization", "PR": "Digital Public Relations"}\n\n'
-        "Example for a network IT company:\n"
-        '{"IP": "Internet Protocol", "ATP": "Authorized Training Partner"}\n\n'
-        "Only include terms that are clearly relevant to this brand.\n"
-        "Use the brand own language from their website — not generic definitions.\n"
-        "Respond ONLY with valid JSON. No markdown, no explanation."
+        + "\n\nFor each term, decide which meaning applies to THIS brand based on their context.\n"
+        + 'Return ONLY a JSON object: {"TERM": "full expanded meaning", ...}\n'
+        + "Example for a marketing agency: "
+        + '{"GEO": "Generative Engine Optimization", "PR": "Digital Public Relations"}\n'
+        + "Example for a network IT company: "
+        + '{"IP": "Internet Protocol", "ATP": "Authorized Training Partner"}\n'
+        + "Only include terms clearly relevant to this brand.\n"
+        + "Use the brand own language from their website.\n"
+        + "Respond ONLY with valid JSON. No markdown."
     )
 
     try:
@@ -313,32 +293,129 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         except Exception:
             parsed = _parse_json_list(raw)
             resolved = parsed[0] if parsed and isinstance(parsed[0], dict) else {}
-
-        # Validate — only keep string values
         resolved = {
             k: v for k, v in resolved.items()
             if isinstance(k, str) and isinstance(v, str) and v.strip()
         }
-
         brand_data["_resolved_terms"] = resolved
         return resolved
-
     except Exception:
         brand_data["_resolved_terms"] = {}
         return {}
 
 
 def build_term_glossary(resolved_terms: dict) -> str:
-    """
-    Converts resolved terms dict into a glossary string
-    to inject into every AI prompt. Prevents misreading.
-    """
+    """Builds glossary string to inject into every AI prompt."""
     if not resolved_terms:
         return ""
-    lines = ["TERM GLOSSARY FOR THIS BRAND (use these exact meanings, never abbreviate):"]
+    lines = ["TERM GLOSSARY (use these exact meanings, never use the abbreviation alone):"]
     for term, meaning in resolved_terms.items():
-        lines.append(f"- {term} = {meaning} (always write the full phrase, never just '{term}')")
+        lines.append("- " + term + " = " + meaning + " (always write the full phrase, never just '" + term + "')")
     return "\n".join(lines) + "\n\n"
+
+
+def generate_gap_analysis(brand_data: dict, all_results: list, scores: dict) -> str:
+    """
+    Generates authentic gap analysis based on actual AI responses from the tracking run.
+    Compares what competitors are being cited for vs what the client offers.
+    Returns a structured analysis string.
+    """
+    import json as _json
+
+    brand_name = brand_data.get("name", "")
+    website_text = brand_data.get("_website_text", "")
+    products = ", ".join(brand_data.get("products", []))
+    key_features = ", ".join(brand_data.get("key_features", []))
+
+    # Extract what ChatGPT actually said about competitors
+    competitor_mentions = {}
+    source_domains = set()
+    response_snippets = []
+
+    for r in all_results:
+        resp_text = r.get("response", "")
+        if resp_text and len(resp_text) > 50:
+            response_snippets.append(resp_text[:300])
+
+        brands = r.get("brands_detected", {}).get("all_brands", [])
+        for b in brands:
+            b_lower = b.lower()
+            if b_lower != brand_name.lower():
+                competitor_mentions[b] = competitor_mentions.get(b, 0) + 1
+
+        for s in r.get("linked_sites", []):
+            domain = s.get("domain", "")
+            if domain and brand_name.lower() not in domain.lower():
+                source_domains.add(domain)
+
+    # Top competitors by frequency
+    top_competitors = sorted(competitor_mentions.items(), key=lambda x: x[1], reverse=True)[:8]
+    overall_visibility = scores.get("overall_citation_share", 0)
+
+    # Build context for gap analysis
+    gap_context = (
+        "BRAND BEING ANALYZED:\n"
+        "Name: " + brand_name + "\n"
+        "What they offer: " + products + "\n"
+        "Key differentiators: " + key_features + "\n"
+    )
+    if website_text:
+        gap_context += "Website content:\n" + website_text[:1500] + "\n\n"
+
+    gap_context += (
+        "\nTRACKING RUN RESULTS:\n"
+        "AI Visibility Score: " + str(overall_visibility) + "%\n"
+        "Total prompts run: " + str(len(all_results)) + "\n\n"
+        "BRANDS APPEARING INSTEAD OF " + brand_name.upper() + ":\n"
+    )
+    for brand, count in top_competitors:
+        pct = round((count / len(all_results)) * 100)
+        gap_context += "- " + brand + ": appeared in " + str(pct) + "% of responses\n"
+
+    if source_domains:
+        gap_context += "\nSOURCE WEBSITES CHATGPT CITED (that do NOT include " + brand_name + "):\n"
+        for domain in list(source_domains)[:8]:
+            gap_context += "- " + domain + "\n"
+
+    if response_snippets:
+        gap_context += "\nSAMPLE AI RESPONSES (showing why competitors are recommended):\n"
+        for snippet in response_snippets[:3]:
+            gap_context += "---\n" + snippet + "\n"
+
+    gap_prompt = (
+        "You are an AI visibility consultant analyzing why a brand is not appearing in AI search results.\n\n"
+        + gap_context
+        + "\nBased on this data, identify exactly why " + brand_name + " is not being recommended "
+        "and what they need to do to appear.\n\n"
+        "Generate a gap analysis with these 5 sections:\n\n"
+        "1. VISIBILITY DIAGNOSIS\n"
+        "One paragraph explaining exactly why " + brand_name + " has " + str(overall_visibility) + "% visibility. "
+        "Be specific — reference the actual competitors appearing and what signals they have that " + brand_name + " lacks.\n\n"
+        "2. CONTENT GAPS (3 specific gaps)\n"
+        "What specific content does " + brand_name + " need to create to appear in AI responses? "
+        "Reference the actual queries where competitors appeared. Be specific — not 'publish more content' "
+        "but 'create a comparison page for [specific competitor] vs " + brand_name + " because ChatGPT cited [source] for this query'.\n\n"
+        "3. CITATION FOOTPRINT GAPS (3 specific gaps)\n"
+        "Which specific third-party sites cited competitors but not " + brand_name + "? "
+        "What does the brand need to do to get listed on those same sites?\n\n"
+        "4. POSITIONING GAPS (2 specific gaps)\n"
+        "What specific language or proof points do competing brands use that " + brand_name + " does not? "
+        "Reference actual response snippets from the tracking run above.\n\n"
+        "5. TOP 3 PRIORITY ACTIONS\n"
+        "The 3 highest-impact actions " + brand_name + " should take right now, in priority order. "
+        "Each must be specific, actionable, and directly tied to the data above.\n\n"
+        "Keep each section concise and evidence-based. No generic SEO advice. "
+        "Every recommendation must reference actual data from this tracking run."
+    )
+
+    try:
+        result = _call_ai_for_json(gap_prompt)
+        # This returns plain text not JSON
+        if result and len(result) > 100:
+            return result
+        return "Gap analysis could not be generated. Please try again."
+    except Exception as e:
+        return "Gap analysis error: " + str(e)
 
 
 def ai_generate_topics(brand_data: dict) -> list:
@@ -366,7 +443,7 @@ def ai_generate_topics(brand_data: dict) -> list:
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    # ── TERM RESOLUTION: Silently resolve ambiguous terms before any AI call
+    # ── TERM RESOLUTION (silent, runs once per session) ──────────────────
     resolved_terms = resolve_brand_terms(brand_data)
     term_glossary = build_term_glossary(resolved_terms)
 
@@ -565,7 +642,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    # Get resolved terms (computed during topic generation, reused here)
+    # Reuse resolved terms from topic generation
     resolved_terms = brand_data.get("_resolved_terms", {})
     term_glossary = build_term_glossary(resolved_terms)
 
@@ -1079,14 +1156,12 @@ with st.sidebar:
 
 step_names = ["Brand Details", "Topics", "Prompts", "Run & Results"]
 cols = st.columns(4)
-_cur_step = st.session_state.step
-# Map step "1b" to position 1.5 for the indicator
-_step_num = 1.5 if _cur_step == "1b" else (int(_cur_step) if isinstance(_cur_step, int) else 1)
+_cur_step = st.session_state.step if isinstance(st.session_state.step, int) else 1
 for i, (col, name) in enumerate(zip(cols, step_names), 1):
     with col:
-        if i < _step_num:
+        if i < _cur_step:
             st.success(f"✓ {name}")
-        elif i == int(_step_num):
+        elif i == _cur_step:
             st.info(f"▶ {name}")
         else:
             st.caption(f"{i}.  {name}")
@@ -1224,171 +1299,8 @@ if st.session_state.step == 1:
                         del st.session_state[key]
                 # Force website re-fetch since domain may have changed
                 st.session_state.brand_data.pop("_website_text", None)
-            st.session_state.step = "1b"
-            st.rerun()
-
-# =============================================================================
-# STEP 1B: SMART QUESTIONS (AI-generated based on brand)
-# =============================================================================
-
-elif st.session_state.step == "1b":
-    bd = st.session_state.brand_data
-
-    # ── Generate questions AND auto-fill answers from website ─────────────────
-    if "_smart_qa" not in st.session_state:
-
-        # Fetch website if not already done
-        website_text = bd.get("_website_text", "")
-        if not website_text and bd.get("domain"):
-            with st.spinner("🌐 Reading your website..."):
-                website_text = fetch_brand_website(bd.get("domain", ""))
-                st.session_state.brand_data["_website_text"] = website_text
-
-        q_context = (
-            f"Brand: {bd.get('name')}\n"
-            f"Domain: {bd.get('domain')}\n"
-            f"Business type: {bd.get('business_type')}\n"
-            f"What they offer: {', '.join(bd.get('products', []))}\n"
-            f"Who they serve: {', '.join(bd.get('customers', []))}\n"
-            f"Key differentiators: {', '.join(bd.get('key_features', []))}\n"
-            f"Competitors: {', '.join(bd.get('competitors', []))}\n"
-        )
-        if website_text:
-            q_context = f"Website content:\n{website_text[:2000]}\n\n" + q_context
-
-        with st.spinner("🧠 Analyzing your brand and generating insights..."):
-            auto_prompt = (
-                "You are an AI visibility consultant. Read this brand profile carefully:\n\n"
-                + q_context + "\n"
-                "Based on your deep understanding of this brand, generate 4 questions AND "
-                "answer each one yourself using the brand information above.\n\n"
-                "The questions should uncover:\n"
-                "1. What buyers search for when ready to choose this brand\n"
-                "2. What pain they have before finding this brand\n"
-                "3. What makes buyers switch from competitors to this brand\n"
-                "4. The most specific search phrase a real buyer would type\n\n"
-                "Answer each question as if you are the brand's expert analyst "
-                "who has read their website and understands their buyers deeply.\n"
-                "Answers must be specific, realistic, and based only on the brand info above.\n\n"
-                "Return ONLY a JSON array of 4 objects:\n"
-                '[{"question": "...", "answer": "..."},...]\n'
-                "No markdown, no explanation."
-            )
-            try:
-                raw_qa = _call_ai_for_json(auto_prompt)
-                parsed_qa = _parse_json_list(raw_qa)
-                qa_pairs = []
-                for item in parsed_qa:
-                    if isinstance(item, dict) and item.get("question") and item.get("answer"):
-                        qa_pairs.append({
-                            "question": item["question"].strip(),
-                            "answer": item["answer"].strip()
-                        })
-                if len(qa_pairs) < 4:
-                    qa_pairs = [
-                        {"question": f"What would a buyer type into ChatGPT when ready to choose {bd.get('name')}?",
-                         "answer": f"They would likely search for {', '.join(bd.get('products', ['a solution like this'])[:2])}"},
-                        {"question": "What pain does the buyer have before finding this brand?",
-                         "answer": f"They struggle with managing {', '.join(bd.get('key_features', ['their needs'])[:1])} without the right tool."},
-                        {"question": "Which competitor do buyers settle for if they can't find this brand?",
-                         "answer": f"They often end up with {bd.get('competitors', ['a larger competitor'])[0] if bd.get('competitors') else 'a larger competitor'}."},
-                        {"question": "Describe the ideal buyer in one sentence.",
-                         "answer": f"A {', '.join(bd.get('customers', ['professional'])[:1])[0:50]} who needs {', '.join(bd.get('products', ['this solution'])[:1])}."}
-                    ][:4 - len(qa_pairs)]
-            except Exception:
-                qa_pairs = [
-                    {"question": f"What would a buyer type into ChatGPT when ready to choose {bd.get('name')}?", "answer": ""},
-                    {"question": "What pain does the buyer have before finding this brand?", "answer": ""},
-                    {"question": "Which competitor do buyers usually settle for instead?", "answer": ""},
-                    {"question": "Describe the ideal buyer in one sentence.", "answer": ""}
-                ]
-            st.session_state["_smart_qa"] = qa_pairs
-
-    qa_pairs = st.session_state.get("_smart_qa", [])
-
-    # ── Header card ───────────────────────────────────────────────────────────
-    st.markdown("""
-        <div style='background: linear-gradient(135deg, #1e3a5f 0%, #0f2340 100%);
-                    border-radius: 16px; padding: 28px 32px; margin-bottom: 24px;
-                    border: 1px solid #2563eb33;'>
-            <div style='font-size: 13px; color: #7dd3fc; font-weight: 600;
-                        letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px;'>
-                Step 1.5 of 4 · Brand Understanding
-            </div>
-            <div style='font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 10px;'>
-                We read your website and filled these in 🤖
-            </div>
-            <div style='font-size: 15px; color: #94a3b8; line-height: 1.6;'>
-                Based on your website and brand details, we answered these questions about your buyers.
-                <br>
-                <span style='color: #7dd3fc; font-weight: 500;'>Review and edit</span> 
-                anything that looks wrong — or just click 
-                <span style='color: #7dd3fc; font-weight: 500;'>Looks Good →</span> to continue.
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # ── Q&A cards with editable answers ──────────────────────────────────────
-    icons = ["🔍", "💡", "🏁", "👤"]
-    edited_answers = {}
-
-    for idx, qa in enumerate(qa_pairs):
-        question = qa.get("question", "")
-        auto_answer = qa.get("answer", "")
-        icon = icons[idx] if idx < len(icons) else "💬"
-
-        st.markdown(f"""
-            <div style='background: #0f1f35; border: 1px solid #1e3a5f;
-                        border-left: 3px solid #2563eb; border-radius: 10px;
-                        padding: 14px 20px; margin-bottom: 4px;'>
-                <span style='color: #7dd3fc; font-size: 16px;'>{icon}</span>
-                <span style='color: #e2e8f0; font-size: 14px; font-weight: 600;
-                             margin-left: 10px;'>{question}</span>
-            </div>
-        """, unsafe_allow_html=True)
-
-        edited_answers[f"q{idx}"] = st.text_area(
-            label=f"q{idx}",
-            value=auto_answer,
-            key=f"smart_qa_{idx}",
-            label_visibility="collapsed",
-            height=80,
-            help="Auto-filled from your website. Edit if needed."
-        )
-
-    # ── Action buttons ────────────────────────────────────────────────────────
-    st.write("")
-    col_back, col_skip, col_next = st.columns([1, 1, 2])
-
-    with col_back:
-        if st.button("← Back", use_container_width=True):
-            st.session_state.step = 1
-            for k in ["_smart_qa", "_smart_questions"]:
-                if k in st.session_state:
-                    del st.session_state[k]
-            st.rerun()
-
-    with col_skip:
-        if st.button("Skip this step", use_container_width=True):
             st.session_state.step = 2
             st.rerun()
-
-    with col_next:
-        if st.button("✅ Looks Good → Generate Topics", type="primary", use_container_width=True):
-            # Save edited Q&A into brand_data
-            final_qa = []
-            for idx, qa in enumerate(qa_pairs):
-                answer = edited_answers.get(f"q{idx}", "").strip()
-                if answer:
-                    final_qa.append({"question": qa.get("question", ""), "answer": answer})
-            st.session_state.brand_data["_buyer_insights"] = final_qa
-            for key in ["topics", "selected_topics", "prompts_by_topic",
-                        "selected_prompts", "all_results", "run_complete"]:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.session_state.step = 2
-            st.rerun()
-
 # =============================================================================
 # STEP 2: TOPICS
 # =============================================================================
@@ -2221,6 +2133,67 @@ elif st.session_state.step == 4:
                 file_name=f"citation_{brand_name.lower().replace(' ', '_')}.csv",
                 mime="text/csv"
             )
+
+            # ── Gap Finder ────────────────────────────────────────────────
+            st.divider()
+            st.subheader("🔍 Gap Finder")
+            st.caption(
+                "Analyzes your tracking results to find exactly why competitors appear and you don't. "
+                "Evidence-based gaps — not generic SEO advice."
+            )
+
+            if st.button("🔍 Generate Gap Analysis", type="primary", use_container_width=False):
+                with st.spinner("Analyzing AI responses to find your visibility gaps..."):
+                    gap_analysis = generate_gap_analysis(bd, all_results, scores)
+                    st.session_state["_gap_analysis"] = gap_analysis
+
+            if st.session_state.get("_gap_analysis"):
+                gap_text = st.session_state["_gap_analysis"]
+                st.markdown("""
+                    <div style='background: linear-gradient(135deg, #1e3a5f 0%, #0f2340 100%);
+                                border-radius: 12px; padding: 4px 24px 20px 24px;
+                                border: 1px solid #2563eb44; margin: 16px 0;'>
+                """, unsafe_allow_html=True)
+
+                # Parse and render sections with styling
+                sections = {
+                    "1. VISIBILITY DIAGNOSIS": "🩺",
+                    "2. CONTENT GAPS": "📝",
+                    "3. CITATION FOOTPRINT GAPS": "🔗",
+                    "4. POSITIONING GAPS": "🎯",
+                    "5. TOP 3 PRIORITY ACTIONS": "⚡",
+                }
+                remaining = gap_text
+                for section_title, icon in sections.items():
+                    if section_title in remaining:
+                        parts = remaining.split(section_title, 1)
+                        before = parts[0].strip()
+                        remaining = parts[1]
+                        next_section_start = len(remaining)
+                        for other in sections:
+                            if other != section_title and other in remaining:
+                                idx = remaining.find(other)
+                                if idx < next_section_start:
+                                    next_section_start = idx
+                        section_body = remaining[:next_section_start].strip()
+                        remaining = remaining[next_section_start:]
+
+                        st.markdown(f"### {icon} {section_title.split('. ', 1)[1]}")
+                        st.markdown(section_body)
+                        st.markdown("---")
+
+                if remaining.strip():
+                    st.markdown(remaining.strip())
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                # Download gap analysis
+                st.download_button(
+                    label="📥 Download Gap Analysis",
+                    data=gap_text,
+                    file_name=f"gap_analysis_{brand_name.lower().replace(' ', '_')}.txt",
+                    mime="text/plain"
+                )
 
             # ── Re-run options ────────────────────────────────────────────
             st.divider()
