@@ -490,17 +490,22 @@ def ai_generate_topics(brand_data: dict) -> list:
             + "1. Topics are SHORT — 3-6 words. No sentences.\n"
             + "2. At least 3 topics MUST contain one of the PROPRIETARY NAMES above\n"
             + "3. Every topic must be a category search that returns specific brand names\n"
-            + "4. Use category word: " + category_word + "\n"
+            + "4. VARY the ending — do NOT end every topic with the same word.\n"
+            + "   Mix endings: companies, providers, training, software, agency, services, platform\n"
             + "5. No '" + brand_name + "' in any topic\n"
             + "6. No qualifiers like 'best', 'top', 'leading' — just the category phrase\n"
-            + "7. Expand any resolved terms fully — never abbreviate\n"
+            + "7. ALWAYS expand abbreviated terms fully using the TERM GLOSSARY above:\n"
+            + "   WRONG: 'GEO agency' — CORRECT: 'Generative Engine Optimization agency'\n"
+            + "   WRONG: 'AEO services' — CORRECT: 'Answer Engine Optimization services'\n"
+            + "   WRONG: 'IP management' — CORRECT: 'Intellectual Property management'\n"
             + country_topic
-            + "\nEXAMPLES of correct format:\n"
-            + "- 'Juniper Networks training companies'\n"
-            + "- 'authorized Palo Alto Networks training providers'\n"
-            + "- 'Fortinet NSE certification training'\n"
-            + "- 'Generative Engine Optimization agency for SaaS'\n"
-            + "- 'BlueprintIQ content agency'\n\n"
+            + "\nEXAMPLES of correct format (notice varied endings):\n"
+            + "- 'Juniper Networks training companies'      (ends: companies)\n"
+            + "- 'authorized Palo Alto Networks training providers'  (ends: providers)\n"
+            + "- 'Fortinet NSE certification training'      (ends: training)\n"
+            + "- 'Generative Engine Optimization agency for SaaS'  (ends: for SaaS)\n"
+            + "- 'BlueprintIQ content services'             (ends: services)\n"
+            + "Notice: DIFFERENT endings. Not all the same word.\n\n"
             + "For each topic include buyer intent sentence.\n"
             + 'Respond ONLY with JSON: [{"topic": "...", "intent": "..."}, ...]\n'
             + "No markdown."
@@ -525,23 +530,31 @@ def ai_generate_topics(brand_data: dict) -> list:
             + "CRITICAL RULES:\n"
             + "1. Topics are SHORT — 3-6 words maximum. No sentences. No punctuation.\n"
             + "2. Derive topics DIRECTLY from the PRODUCTS list above — use the user's own words\n"
-            + "3. Add the category word '" + category_word + "' to each topic\n"
+            + "3. VARY the ending word — do NOT end every topic with the same word.\n"
+            + "   Use a natural mix of: services, agency, firm, creation, writing services,\n"
+            + "   for startups, for SaaS, provider, companies — pick what fits each topic\n"
             + "4. NO qualifiers: no 'best', 'top', 'leading', 'expert'\n"
             + "5. NO positioning language: no 'no fluff', 'pipeline focused', 'AI optimized'\n"
             + "6. Use plain buyer language — how someone searches, not how the brand markets itself\n"
             + "7. No '" + brand_name + "' in any topic\n"
-            + "8. Every topic must return a list of specific " + category_word + "s when typed into ChatGPT\n"
+            + "8. Every topic must return a list of specific brands when typed into ChatGPT\n"
+            + "9. ALWAYS expand abbreviated terms using the TERM GLOSSARY above — never abbreviate:\n"
+            + "   WRONG: 'GEO content agency' — CORRECT: 'Generative Engine Optimization agency'\n"
+            + "   WRONG: 'AEO services' — CORRECT: 'Answer Engine Optimization services'\n"
+            + "   WRONG: 'LLM visibility' — CORRECT: 'large language model visibility'\n"
             + country_topic
-            + "\nEXAMPLES of correct Traqer-style format:\n"
-            + "- 'B2B content marketing services'\n"
-            + "- 'SaaS content marketing agency'\n"
-            + "- 'SEO content for startups'\n"
-            + "- 'Thought leadership content creation'\n"
-            + "- 'Long form content writing services'\n\n"
+            + "\nEXAMPLES of correct Traqer-style format (notice VARIED endings):\n"
+            + "- 'B2B content marketing services'          (ends: services)\n"
+            + "- 'SaaS content marketing agency'           (ends: agency)\n"
+            + "- 'SEO content for startups'                (ends: for startups)\n"
+            + "- 'Thought leadership content creation'     (ends: creation)\n"
+            + "- 'Long form content writing services'      (ends: writing services)\n"
+            + "Notice: FIVE DIFFERENT endings. This is correct.\n\n"
             + "EXAMPLES of incorrect format (do not generate these):\n"
-            + "- 'top agency for no fluff content' (uses positioning language)\n"
-            + "- 'best pipeline focused content agency' (uses qualifier + positioning)\n"
-            + "- 'AI search optimized content for SaaS companies' (too long, positioning language)\n\n"
+            + "- 'GEO content agency' (abbreviated — write Generative Engine Optimization)\n"
+            + "- 'B2B agency, SaaS agency, SEO agency, GEO agency' (all same ending — vary them)\n"
+            + "- 'top agency for no fluff content' (qualifier + positioning language)\n"
+            + "- 'best pipeline focused content agency' (qualifier + positioning)\n\n"
             + "For each topic include buyer intent sentence.\n"
             + 'Respond ONLY with JSON: [{"topic": "...", "intent": "..."}, ...]\n'
             + "No markdown."
@@ -572,6 +585,15 @@ def ai_generate_topics(brand_data: dict) -> list:
         "best practices", "introduction", "overview", "explained",
         "what is", "benefits of", "advantages of",
     ]
+
+    # Also expand any abbreviated terms that slipped through in topics
+    # This is a safety net — the prompt should handle this but we verify
+    for abbr, expansion in (resolved_terms or {}).items():
+        topics = [
+            t.replace(abbr, expansion).replace(abbr.lower(), expansion)
+            if abbr in t or abbr.lower() in t.lower() else t
+            for t in topics
+        ]
 
     filtered = []
     for t in topics:
