@@ -742,28 +742,31 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "GENERATE EXACTLY 5 PROMPTS\n"
         + "════════════════════════════════════\n\n"
 
-        + "CONSISTENT 5-PROMPT STRUCTURE — follow this exact order every time:\n\n"
+        + "CONSISTENT 5-PROMPT STRUCTURE — each prompt must be GENUINELY DIFFERENT in angle:\n\n"
 
-        + "PROMPT 1 — BARE TOPIC:\n"
-        + "The topic phrase exactly as a buyer types it. No prefix. No question mark.\n"
+        + "PROMPT 1 — BARE TOPIC (category search):\n"
+        + "The topic phrase exactly as typed. No prefix. No question mark.\n"
+        + "This is a short category search — 3-6 words.\n"
         + "CORRECT: 'SaaS content marketing agency'\n"
-        + "CORRECT: 'authorized Juniper Networks training companies'\n"
-        + "CORRECT: 'patent management software for startups'\n\n"
+        + "CORRECT: 'authorized Juniper Networks training companies'\n\n"
 
-        + "PROMPT 2 — BEST SEARCH:\n"
-        + "Same topic with 'best' or 'top' added. Short. No question mark. Buying signal.\n"
-        + "CORRECT: 'best SaaS content marketing agencies'\n"
-        + "CORRECT: 'top authorized Palo Alto Networks training providers'\n"
-        + "CORRECT: 'best patent lifecycle management software for startups'\n"
-        + "WRONG: 'what should I look for in a content agency' (advice not brands)\n\n"
+        + "PROMPT 2 — BUYER QUESTION (who/what question with specific buyer context):\n"
+        + "A full question that adds BUYER CONTEXT not just 'best' prefix.\n"
+        + "Must mention a specific buyer type, company stage, or use case from the topic.\n"
+        + "CORRECT: 'What B2B SaaS content agencies specialise in pipeline growth?'\n"
+        + "CORRECT: 'Who offers authorized Juniper Networks training for enterprise IT teams?'\n"
+        + "CORRECT: 'What patent management software works best for startup founders?'\n"
+        + "WRONG: 'best SaaS content marketing agencies' (too similar to prompt 1)\n"
+        + "WRONG: 'top Juniper training companies' (just prompt 1 with best added)\n\n"
 
-        + "PROMPT 3 — WHICH QUESTION:\n"
-        + "Starts with 'Which'. Specific. Forces ChatGPT to name specific brands.\n"
-        + "CORRECT: 'Which content agencies specialise in B2B SaaS pipeline growth?'\n"
-        + "CORRECT: 'Which companies offer Juniper Networks training with lab access?'\n"
-        + "CORRECT: 'Which patent management software is best for startup IP teams?'\n"
-        + "WRONG: 'Which strategies work for content marketing?' (returns strategies not brands)\n"
-        + "WRONG: 'Which factors matter when choosing an agency?' (returns criteria not brands)\n\n"
+        + "PROMPT 3 — WHICH QUESTION (evaluating options):\n"
+        + "Starts with 'Which'. Buyer is comparing options. Specific use case.\n"
+        + "Must include a specific qualifier that makes it different from prompts 1 and 2.\n"
+        + "CORRECT: 'Which content agencies have the strongest B2B SaaS case studies?'\n"
+        + "CORRECT: 'Which Juniper Networks training providers offer unlimited lab access?'\n"
+        + "CORRECT: 'Which patent software includes USPTO sync and cost prediction?'\n"
+        + "WRONG: 'Which SaaS content marketing agencies are best?' (same as prompts 1-2)\n"
+        + "WRONG: 'Which Generative Engine Optimization content agencies exist?' (just the topic rephrased)\n\n"
 
         + comparison_instruction + "\n"
         + "CORRECT: 'How does Animalz compare to Siege Media for B2B SaaS content?'\n"
@@ -862,11 +865,26 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
                     if p not in cleaned:
                         cleaned.append(p)
 
-    # Build final 5: bare topic first, then up to 4 generated
+    def _too_similar(a, b):
+        """Returns True if two prompts are too similar to be useful as separate queries."""
+        a_words = set(a.lower().split())
+        b_words = set(b.lower().split())
+        if not a_words or not b_words:
+            return False
+        overlap = len(a_words & b_words) / min(len(a_words), len(b_words))
+        return overlap > 0.75  # More than 75% word overlap = too similar
+
+    # Build final 5: bare topic first, then up to 4 genuinely different prompts
     result = [topic_as_prompt]
     for p in cleaned:
-        if p.lower() != topic_as_prompt.lower() and p not in result:
-            result.append(p)
+        if p.lower() == topic_as_prompt.lower():
+            continue
+        if p in result:
+            continue
+        # Reject if too similar to any already accepted prompt
+        if any(_too_similar(p, existing) for existing in result):
+            continue
+        result.append(p)
         if len(result) >= 5:
             break
 
