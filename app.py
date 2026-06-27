@@ -682,21 +682,26 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         rotated = competitors[topic_hash:] + competitors[:topic_hash]
         comp_for_comparison = rotated[:2] if len(rotated) >= 2 else rotated
 
-    if comp_for_comparison and len(comp_for_comparison) >= 2:
+    if comp_for_comparison:
+        # Compare the BRAND against a competitor — not two competitors against each other
+        # This forces ChatGPT to mention the brand directly in its answer
         comparison_instruction = (
-            "4. COMPARISON: Ask how " + comp_for_comparison[0] + " compares to "
-            + comp_for_comparison[1] + " for this specific use case. "
-            "Must return specific brand names in the answer."
-        )
-    elif comp_for_comparison:
-        comparison_instruction = (
-            "4. ALTERNATIVES: Ask for the best alternatives to "
-            + comp_for_comparison[0] + " for this use case."
+            "4. COMPARISON: Compare " + brand_name + " against "
+            + comp_for_comparison[0] + " for this specific use case. "
+            "This is the ONE prompt where you MAY mention the brand name '"
+            + brand_name + "' — because comparison prompts need it. "
+            "CORRECT: 'How does " + brand_name + " compare to "
+            + comp_for_comparison[0] + " for [use case from topic]?'\n"
+            "CORRECT: '" + brand_name + " vs " + comp_for_comparison[0]
+            + " for [use case from topic]?'"
         )
     else:
+        # No competitors entered — ask for alternatives in the category
         comparison_instruction = (
             "4. COMPARISON: Ask which " + category_word
-            + "s are most recommended for this specific use case."
+            + "s are most recommended for this specific use case. "
+            "CORRECT: 'Which " + category_word
+            + "s are best for [specific need from topic]?'"
         )
 
     # Persona role and recommendation ask rotation
@@ -737,57 +742,61 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "GENERATE EXACTLY 5 PROMPTS\n"
         + "════════════════════════════════════\n\n"
 
+        + "CONSISTENT 5-PROMPT STRUCTURE — follow this exact order every time:\n\n"
+
         + "PROMPT 1 — BARE TOPIC:\n"
-        + "Write the topic exactly as a buyer would type it in a search bar.\n"
-        + "No prefix. No question mark. Just the topic phrase as-is.\n"
+        + "The topic phrase exactly as a buyer types it. No prefix. No question mark.\n"
         + "CORRECT: 'SaaS content marketing agency'\n"
         + "CORRECT: 'authorized Juniper Networks training companies'\n"
         + "CORRECT: 'patent management software for startups'\n\n"
 
-        + "PROMPT 2 — BUYING INTENT:\n"
-        + "Short direct search with a buying signal. 4-7 words. No question mark.\n"
-        + "Add 'best', 'top', or 'leading' to signal purchase intent.\n"
+        + "PROMPT 2 — BEST SEARCH:\n"
+        + "Same topic with 'best' or 'top' added. Short. No question mark. Buying signal.\n"
         + "CORRECT: 'best SaaS content marketing agencies'\n"
         + "CORRECT: 'top authorized Palo Alto Networks training providers'\n"
-        + "CORRECT: 'best patent lifecycle management software'\n"
+        + "CORRECT: 'best patent lifecycle management software for startups'\n"
         + "WRONG: 'what should I look for in a content agency' (advice not brands)\n\n"
 
-        + "PROMPT 3 — NATURAL QUESTION:\n"
-        + "How someone asks a knowledgeable friend. Conversational. Complete sentence.\n"
-        + "Must end with a question that names brands in the answer.\n"
-        + "CORRECT: 'Which content agencies actually drive pipeline for SaaS companies?'\n"
-        + "CORRECT: 'What companies offer Juniper training with real lab access?'\n"
-        + "CORRECT: 'Who makes the best patent tracking software for small IP teams?'\n"
-        + "WRONG: 'What are some effective content marketing strategies?' (returns tips not brands)\n"
-        + "WRONG: 'How do I improve my SaaS content marketing?' (advice not brands)\n\n"
+        + "PROMPT 3 — WHICH QUESTION:\n"
+        + "Starts with 'Which'. Specific. Forces ChatGPT to name specific brands.\n"
+        + "CORRECT: 'Which content agencies specialise in B2B SaaS pipeline growth?'\n"
+        + "CORRECT: 'Which companies offer Juniper Networks training with lab access?'\n"
+        + "CORRECT: 'Which patent management software is best for startup IP teams?'\n"
+        + "WRONG: 'Which strategies work for content marketing?' (returns strategies not brands)\n"
+        + "WRONG: 'Which factors matter when choosing an agency?' (returns criteria not brands)\n\n"
 
         + comparison_instruction + "\n"
         + "CORRECT: 'How does Animalz compare to Siege Media for B2B SaaS content?'\n"
         + "CORRECT: 'Alternatives to Global Knowledge for Palo Alto Networks training?'\n"
-        + "WRONG: 'What criteria should I use to compare content agencies?' (criteria not brands)\n\n"
+        + "CORRECT: 'PatSnap vs Anaqua for startup patent management?'\n"
+        + "WRONG: 'What criteria should I use to compare agencies?' (criteria not brands)\n\n"
 
         + "PROMPT 5 — PERSONA:\n"
-        + "First person. Specific role. Specific need. Ends with recommendation ask.\n"
-        + "CORRECT: 'I am a " + persona_role + " and I need [specific need from topic]. " + rec_ask + "'\n"
-        + "Must end with: " + rec_ask + "\n"
-        + "WRONG: Ending without a recommendation ask\n\n"
+        + "First person. Specific role. Specific need from the topic. Ends with recommendation ask.\n"
+        + "CORRECT: 'I am a " + persona_role + " and I need [specific need from this topic]. " + rec_ask + "'\n"
+        + "Must end with exactly: " + rec_ask + "\n"
+        + "WRONG: any persona prompt that ends without a recommendation ask\n\n"
 
         + "════════════════════════════════════\n"
         + "UNIVERSAL RULES FOR ALL 5 PROMPTS\n"
         + "════════════════════════════════════\n"
-        + "✓ Every prompt must cause ChatGPT to NAME SPECIFIC BRANDS in its answer\n"
+        + "✓ Every prompt must cause ChatGPT to NAME SPECIFIC BRANDS\n"
         + "✓ Every prompt must be about TOPIC: \"" + topic + "\"\n"
+        + "✓ Follow the exact order: Bare topic → Best search → Which question → Compare → Persona\n"
         + avoid_software
-        + "✗ NEVER mention \"" + brand_name + "\" in any prompt\n"
+        + "✗ NEVER mention \"" + brand_name + "\" in prompts 1, 2, 3, 5\n"
+        + "✓ You MAY mention \"" + brand_name + "\" ONLY in prompt 4 (comparison)\n"
         + "✗ NEVER generate advice-seeking prompts ('what should I look for')\n"
-        + "✗ NEVER generate how-to prompts ('how do I improve my')\n"
+        + "✗ NEVER generate how-to prompts ('how do I...', 'how can I...')\n"
         + "✗ NEVER generate criteria prompts ('what are the key features of')\n"
+        + "✗ NEVER start prompt 3 with 'What' or 'How' — it must start with 'Which'\n"
         + "✗ NEVER use year numbers\n"
         + "✗ NEVER use country names in prompt text\n"
         + "✗ NEVER abbreviate expanded terms from the TERM GLOSSARY above\n\n"
 
-        + "Return ONLY a JSON array of exactly 5 strings.\n"
-        + "No markdown. No explanation. No numbering.\n"
+        + "Return ONLY a JSON array of exactly 5 strings in this order:\n"
+        + "[bare_topic, best_search, which_question, comparison, persona]\n"
+        + "No markdown. No explanation.\n"
         + '["prompt1", "prompt2", "prompt3", "prompt4", "prompt5"]'
     )
 
