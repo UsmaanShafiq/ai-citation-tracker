@@ -758,7 +758,22 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             "Example: if differentiator is 'open source', one persona should mention 'open source'.\n"
         )
 
-    _p3_starters = ['Are there any', 'Where can I find', 'Which companies offer', 'Who provides', 'Is there a', 'What companies specialize in', 'Which platforms offer']
+    # P3 starters must NEVER begin with "I" or "we" — those are reserved for P4.
+    # All openers are third-person or question-form to guarantee no collision with P4.
+    _p3_starters = [
+        'Are there any',
+        'Where can I find',
+        'Which companies offer',
+        'Who provides',
+        'Is there a',
+        'What companies specialize in',
+        'Which platforms offer',
+        'Are there tools that',
+        'Who offers',
+        'What software handles',
+    ]
+    # Defensive filter: strip any starter that begins with I/we (should never trigger)
+    _p3_starters = [s for s in _p3_starters if not s.lower().startswith(("i ", "i'", "we "))]
     _p3_opener = _p3_starters[topic_hash % len(_p3_starters)]
     # ── Fix 1: Split into system prompt (rules/persona) and user message (task) ──
     # System role = GEO strategist identity + all rules
@@ -788,10 +803,19 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "2. NEVER start two prompts in the same topic with the same word or phrase.\n"
         "3. Every prompt must contain at least one word or phrase from the topic name.\n"
         "4. NEVER write prompts so generic they could apply to any brand or any topic.\n"
-        "5. GRAMMAR: always singular persona — \'I am a researcher\' NEVER \'I am a researchers\'\n"
+        "5. GRAMMAR: always singular persona — 'I am a researcher' NEVER 'I am a researchers'\n"
         "6. NEVER use year numbers.\n"
         "7. NEVER abbreviate industry terms — always write the full phrase.\n"
-        "8. If any prompt looks similar to another — stop, rewrite from a completely different angle.\n\n"
+        "8. If any prompt looks similar to another — stop, rewrite from a completely different angle.\n"
+        "9. CATEGORY WORD RULE — critical: the brand context tells you the Solution type (e.g. software, tool, agency, training provider). "
+        "Use ONLY that exact category word in prompts 2 and 3. "
+        "NEVER substitute it with a different category. "
+        "If Solution type is 'software' — write 'software' or 'tool', NEVER 'agency' or 'agencies' or 'services'. "
+        "If Solution type is 'agency' — write 'agency', NEVER 'software' or 'tool'. "
+        "This rule overrides everything else.\n"
+        "10. PERSONA SEPARATION — P3 must NEVER start with 'I' or 'we'. "
+        "P3 is always third-person (Who provides / Which platforms / Are there tools). "
+        "Only P4 uses first-person 'I' or 'we'. Two prompts starting with 'I' in the same set is a failure.\n\n"
 
         "OUTPUT FORMAT:\n"
         "Return ONLY a JSON array of exactly 5 strings.\n"
@@ -821,37 +845,44 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
         + "PROMPT 2 — must start with WHO or WHICH (best is banned):\n"
         + "MUST begin with Who or Which. No other opener allowed. Never use best.\n"
-        + "No persona. No first person.\n"
+        + "No persona. No first person. THIRD PERSON ONLY.\n"
+        + "CATEGORY WORD: use '" + category_word + "' — NEVER substitute with agency/agencies/services/firms if the solution type is not an agency.\n"
         + "CORRECT: Who provides " + category_word + "s for [topic use case]?\n"
-        + "CORRECT: Which " + category_word + "s specialize in [topic]?\n"
+        + "CORRECT: Which " + category_word + "s handle [topic] well?\n"
+        + "WRONG: 'Which agencies offer...' when solution type is " + category_word + " — agencies is BANNED here.\n"
         + "WRONG: best — completely banned from this prompt.\n\n"
 
-        + "PROMPT 3 — must start with " + _p3_opener + " (best is banned):\n"
-        + "MUST begin with " + _p3_opener + ". No other opener.\n"
-        + "No persona. Neutral. Never use best.\n"
-        + "CORRECT: " + _p3_opener + " [specific question about topic]?\n"
+        + "PROMPT 3 — must start with '" + _p3_opener + "' (best is banned, I/we banned):\n"
+        + "MUST begin with exactly: " + _p3_opener + ". No other opener.\n"
+        + "THIRD PERSON ONLY — absolutely no 'I' or 'we'. P4 owns first person.\n"
+        + "CATEGORY WORD: use '" + category_word + "' — same rule as P2.\n"
+        + "CORRECT: " + _p3_opener + " " + category_word + "s that handle [topic]?\n"
+        + "WRONG: 'I need...' or 'We are...' — first person is BANNED in P3.\n"
         + "WRONG: best — banned in prompt 3.\n\n"
 
         + "PROMPT 4 — must start with I or we (best banned):\n"
-        + "MUST begin with I or we. No other opener.\n"
+        + "MUST begin with I or we. No other opener. THIS IS THE ONLY FIRST-PERSON PROMPT.\n"
         + "Persona: " + personas[0] + " singular only.\n"
         + "Short casual. How this buyer actually types.\n"
         + "Reference a differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
         + "CORRECT: I'm a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
-        + "WRONG: starts with best.\n\n"
+        + "WRONG: starts with best. WRONG: same persona or same opening as P3.\n\n"
 
         + "PROMPT 5 — must start with How does " + brand_name + " or " + brand_name + " vs:\n"
         + "Only prompt allowed to name " + brand_name + " directly.\n"
         + "Compare against " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + ".\n"
         + "CORRECT: How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic]?\n\n"
 
-        + "MANDATORY STARTERS:\n"
+        + "MANDATORY STARTERS — enforced strictly:\n"
         + "Prompt 1: bare topic\n"
-        + "Prompt 2: Who OR Which\n"
-        + "Prompt 3: " + _p3_opener + "\n"
-        + "Prompt 4: I OR we\n"
+        + "Prompt 2: Who OR Which — use category word '" + category_word + "', never 'agencies' or wrong type\n"
+        + "Prompt 3: " + _p3_opener + " — THIRD PERSON ONLY, never I/we\n"
+        + "Prompt 4: I OR we — ONLY first-person prompt in the set, persona: " + personas[0] + "\n"
         + "Prompt 5: How does " + brand_name + " OR " + brand_name + " vs\n"
-        + "BEST is banned from prompts 2 3 and 4. No two prompts start with the same word.\n"
+        + "BEST is banned from prompts 2, 3, and 4.\n"
+        + "No two prompts start with the same word.\n"
+        + "P3 is NEVER first person. P4 is the ONLY first person prompt.\n"
+        + "Category word in P2 and P3 is always '" + category_word + "' — no substitutions.\n"
         + "Return ONLY the JSON array."
     )
 
