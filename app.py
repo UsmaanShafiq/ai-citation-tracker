@@ -1715,7 +1715,7 @@ elif st.session_state.step == 4:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Overall Citation Share", f"{scores['overall_citation_share']}%")
             c2.metric("Total Mentions", f"{scores['total_mentions']} / {scores['total_queries_run']}")
-            c3.metric("Position Score", f"{scores['position_score_pct']}%")
+            c3.metric("Avg Position", "N/A", help="Position tracking removed — LLM position detection was unreliable")
             c4.metric("Topics Tracked", len(st.session_state.selected_topics))
 
             # ── Competitor benchmark ──────────────────────────────────────
@@ -1883,10 +1883,7 @@ elif st.session_state.step == 4:
                                 st.markdown(f"**{r['tool']}**")
                                 mentioned = r["brands_detected"]["target_mentioned"]
                                 context = r["brands_detected"]["target_context"]
-                                position = r["brands_detected"]["target_position"]
-
                                 # Final safety check: verify brand actually in response text
-                                # Catches any LLM hallucination from brand_detector
                                 import re as _re_check
                                 _resp_text = r.get("response", "")
                                 _brand_in_text = bool(_re_check.search(
@@ -1894,10 +1891,10 @@ elif st.session_state.step == 4:
                                     _resp_text, _re_check.IGNORECASE
                                 ))
                                 if mentioned and not _brand_in_text:
-                                    mentioned = False  # Override false positive
+                                    mentioned = False
 
                                 if mentioned:
-                                    st.success(f"Brand mentioned | Context: {context} | Position: #{position}")
+                                    st.success(f"✅ {brand_name} appears in this response | Context: {context}")
                                 else:
                                     st.warning("Brand not mentioned")
 
@@ -1997,7 +1994,7 @@ elif st.session_state.step == 4:
                     "AI Model": r["tool"],
                     "Prompt": r["query"],
                     "Brand Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
-                    "Position": r["brands_detected"]["target_position"] or "-",
+
                     "Context": r["brands_detected"]["target_context"],
                     "Linked Sites": len(r.get("linked_sites", [])),
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
@@ -2016,7 +2013,7 @@ elif st.session_state.step == 4:
                     "AI Model": r["tool"],
                     "Prompt": r["query"],
                     "Brand Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
-                    "Position": r["brands_detected"]["target_position"] or "-",
+
                     "Context": r["brands_detected"]["target_context"],
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
                     "Linked Sites": "; ".join([s["url"] for s in r.get("linked_sites", [])]),

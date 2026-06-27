@@ -153,7 +153,7 @@ def pass_two_llm_detection(
         f"    {{\"name\": \"Google\", \"category\": \"dominant\"}}\n"
         f"  ],\n"
         f"  \"target_mentioned\": true,\n"
-        f"  \"target_position\": 1,\n"
+
         f"  \"target_context\": \"recommended\"\n"
         f"}}\n\n"
         f"Rules:\n"
@@ -301,10 +301,8 @@ def detect_brands(
 
     # Get context and position from LLM only when we confirmed the brand is present
     target_context = "not_mentioned"
-    target_position = 0
     if target_in_string:
         target_context = llm_result.get("target_context", "mentioned")
-        target_position = llm_result.get("target_position", 0)
         # If LLM says not_mentioned but string match found it, override context
         if target_context == "not_mentioned":
             target_context = "mentioned"
@@ -315,7 +313,7 @@ def detect_brands(
         "government_brands": llm_result.get("government_brands", []),
         "dominant_brands": llm_result.get("dominant_brands", []),
         "target_mentioned": target_mentioned,
-        "target_position": target_position,
+
         "target_context": target_context,
         "string_match_brands": string_matches,
         "llm_detected_brands": llm_result.get("all_brands", []),
