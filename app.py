@@ -639,52 +639,64 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "Prompt 4 persona: " + personas[2] + "\n"
         + "Prompt 5 persona: " + (personas[3] if len(personas) > 3 else personas[0]) + "\n\n"
 
-        + "GENERATE EXACTLY 5 PROMPTS:\n\n"
+        + "GENERATE EXACTLY 5 PROMPTS IN THIS EXACT STRUCTURE:\n\n"
 
-        + "PROMPT 1 — KEYWORD:\n"
-        + "Write the topic phrase exactly as typed. No prefix. No question mark.\n"
+        + "PROMPT 1 — PLAIN KEYWORD:\n"
+        + "The topic name exactly as written. Nothing added. No question mark.\n"
         + "CORRECT: '" + topic + "'\n\n"
 
-        + "PROMPT 2 — PERSONA (use: " + personas[0] + "):\n"
-        + "First person. This buyer's specific need related to the topic. Ends with: " + rec_ask_1 + "\n"
-        + "CORRECT: 'I am a " + personas[0] + " and I need [specific need from topic]. " + rec_ask_1 + "'\n"
-        + "WRONG: generic question with no persona and no differentiator\n\n"
+        + "PROMPT 2 — PERSONA (buyer: " + personas[0] + "):\n"
+        + "First person singular. MUST say 'I am a " + personas[0] + "' — singular not plural.\n"
+        + "References one of these differentiators naturally: " + ", ".join(top_features[:2] if top_features else ["the solution"]) + ".\n"
+        + "Ends with exactly: 'What would you suggest?' or 'Who should I choose?'\n"
+        + "CORRECT: 'I am a " + personas[0] + " and I need [differentiator] for [topic use case]. What would you suggest?'\n"
+        + "WRONG: 'I am a " + personas[0] + "s' (never pluralise the persona)\n"
+        + "WRONG: ends with anything other than 'What would you suggest?' or 'Who should I choose?'\n\n"
 
-        + "PROMPT 3 — PERSONA WITH DIFFERENTIATOR (use: " + personas[1] + "):\n"
-        + "First person. Must naturally mention one of the brand's key differentiators. Ends with: " + rec_ask_2 + "\n"
-        + "CORRECT: 'I am a " + personas[1] + " and I need [differentiator from the list above] for [topic]. " + rec_ask_2 + "'\n"
-        + "WRONG: persona prompt with no differentiator reference\n\n"
+        + "PROMPT 3 — PERSONA (buyer: " + personas[1] + ", DIFFERENT from prompt 2):\n"
+        + "First person singular. MUST say 'I am a " + personas[1] + "' — singular not plural.\n"
+        + "Different differentiator angle from prompt 2. Use: " + ", ".join(top_features[1:3] if len(top_features) > 1 else ["the solution"]) + ".\n"
+        + "Ends with exactly: 'Any recommendations?' or 'Which would you go with?'\n"
+        + "CORRECT: 'I am a " + personas[1] + " looking for [different angle on topic]. Any recommendations?'\n"
+        + "WRONG: same persona as prompt 2\n"
+        + "WRONG: ends with anything other than 'Any recommendations?' or 'Which would you go with?'\n\n"
 
-        + "PROMPT 4 — PERSONA (use: " + personas[2] + "):\n"
-        + "First person. Different angle on the topic. Ends with: " + rec_ask_3 + "\n"
-        + "CORRECT: 'I am a " + personas[2] + " looking for [topic use case]. " + rec_ask_3 + "'\n\n"
+        + "PROMPT 4 — HOW-TO OR INFORMATIONAL:\n"
+        + "Third person or neutral. NO persona. NO 'I am a'.\n"
+        + "Starts with 'How do I' OR 'What is the best way to' OR 'Which " + category_word + "s offer'.\n"
+        + "Focuses on the use case from the topic, not the buyer role.\n"
+        + "CORRECT: 'How do I find a " + category_word + " that offers [topic use case]?'\n"
+        + "CORRECT: 'Which " + category_word + "s offer [key feature from topic]?'\n"
+        + "CORRECT: 'What is the best way to [use case from topic]?'\n"
+        + "WRONG: starts with 'I am a' or contains a buyer persona\n\n"
 
-        + comparison_line + "\n"
+        + "PROMPT 5 — COMPARISON:\n"
+        + "Directly compares " + brand_name + " against " + (comp_for_comparison[0] if comp_for_comparison else "a competitor") + ".\n"
+        + "This is the ONLY prompt where you may use the brand name '" + brand_name + "'.\n"
+        + "CORRECT: 'How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic use case]?'\n"
+        + "CORRECT: '" + brand_name + " vs " + (comp_for_comparison[0] if comp_for_comparison else "competitors") + " — which is better for [topic]?'\n\n"
 
-        + "UNIVERSAL RULES:\n"
-        + "- Every prompt must cause ChatGPT to NAME SPECIFIC " + category_word.upper() + "S\n"
-        + "- Every prompt must be about TOPIC: \"" + topic + "\"\n"
+        + "ABSOLUTE RULES:\n"
+        + "- ALWAYS use singular persona: 'I am a researcher' NEVER 'I am a researchers'\n"
+        + "- NEVER repeat the same persona in prompts 2 and 3\n"
         + "- NEVER generate advice-seeking prompts ('what should I look for')\n"
-        + "- NEVER generate how-to prompts ('how do I improve')\n"
-        + "- NEVER generate criteria prompts ('what are the key features of')\n"
-        + "- NEVER mention '" + brand_name + "' in prompts 1-4\n"
         + "- NEVER use year numbers\n"
-        + "- NEVER use country names in prompt text\n"
-        + "- NEVER abbreviate expanded terms from TERM GLOSSARY\n\n"
+        + "- NEVER abbreviate terms from TERM GLOSSARY above\n"
+        + "- Every prompt must cause ChatGPT to name specific " + category_word + "s\n\n"
 
         + "GOOD EXAMPLE SET for topic 'free AI patent search tool':\n"
         + "1. 'free AI patent search tool'\n"
-        + "2. 'I am a startup founder and I need a free AI tool to search patents before filing. What do you recommend?'\n"
-        + "3. 'I am an inventor and I need an open source patent search platform with no login required. What would you suggest?'\n"
-        + "4. 'I am a researcher looking for a semantic prior art search tool with API access. Which one should I go with?'\n"
-        + "5. 'Which free patent search tools use natural language queries?'\n\n"
+        + "2. 'I am a startup founder and I need a free AI tool to search patents before filing. What would you suggest?'\n"
+        + "3. 'I am an inventor looking for an open source patent search platform with no login required. Any recommendations?'\n"
+        + "4. 'Which patent search tools offer natural language queries and free access?'\n"
+        + "5. 'How does PQAI compare to Google Patents for prior art search?'\n\n"
 
-        + "BAD EXAMPLE SET (never generate these):\n"
-        + "1. 'What are the best AI tools for patent searching?' (not bare topic)\n"
-        + "2. 'How can I use AI to find patents?' (how-to, no persona, no brands)\n"
-        + "3. 'What should I know about patent search software?' (advice-seeking)\n"
-        + "4. 'Can you recommend patent search resources?' (vague, no persona)\n"
-        + "5. 'How do patent attorneys search for prior art?' (how-to, wrong persona repeated)\n\n"
+        + "BAD EXAMPLE SET (never do this):\n"
+        + "1. 'What are the best AI tools for patent searching?' (not the bare topic)\n"
+        + "2. 'I am a startup founders' (pluralised persona — WRONG)\n"
+        + "3. 'I am a startup founder...' again (same persona repeated from prompt 2 — WRONG)\n"
+        + "4. 'I am a researcher looking for...' (has persona — prompt 4 must be neutral)\n"
+        + "5. 'Which tools are best?' (does not name brand vs competitor)\n\n"
 
         + "Return ONLY a JSON array of exactly 5 strings.\n"
         + "No markdown. No explanation.\n"
@@ -756,8 +768,34 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     def _clean(p):
         p = year_pattern.sub("", p).strip()
         p = fix_plurals(p)
-        return p
 
+        def _singularise(w):
+            if w.endswith("ies") and len(w) > 4: return w[:-3] + "y"
+            if w.endswith("ers") and not w.endswith("eers"): return w[:-1]
+            if w.endswith("ants") or w.endswith("ents"): return w[:-1]
+            if w.endswith("ors") and len(w) > 4: return w[:-1]
+            if w.endswith("sts"): return w[:-1]
+            return w
+
+        def _fix_persona(text):
+            words = text.split()
+            result = []
+            for i, w in enumerate(words):
+                if (i >= 3
+                        and words[i-3].lower() == "i"
+                        and words[i-2].lower() == "am"
+                        and words[i-1].lower() in ("a", "an")):
+                    w = _singularise(w)
+                elif (i >= 4
+                      and words[i-4].lower() == "i"
+                      and words[i-3].lower() == "am"
+                      and words[i-2].lower() in ("a", "an")):
+                    w = _singularise(w)
+                result.append(w)
+            return " ".join(result)
+
+        p = _fix_persona(p)
+        return p
     # Generate prompts
     raw_prompts = _call_ai_for_json(prompt)
     parsed = _parse_json_list(raw_prompts)
