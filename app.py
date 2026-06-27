@@ -599,9 +599,25 @@ def ai_generate_topics(brand_data: dict) -> list:
         pattern = _re_expand.compile(r'\b' + _re_expand.escape(abbr) + r'\b', _re_expand.IGNORECASE)
         topics = [pattern.sub(expansion, t) for t in topics]
 
+    # Fix common plural misspellings in topics
+    import re as _re_topic_plural
+    TOPIC_PLURAL_FIXES = {
+        r'\bagencys\b': 'agencies',
+        r'\bcompanys\b': 'companies',
+        r'\bprovidors\b': 'providers',
+        r'\bsoftwares\b': 'software',
+        r'\bplatforms s\b': 'platforms',
+    }
+
+    def fix_topic_plurals(text):
+        for pat, rep in TOPIC_PLURAL_FIXES.items():
+            text = _re_topic_plural.sub(pat, rep, flags=_re_topic_plural.IGNORECASE)
+        return text
+
     filtered = []
     for t in topics:
         t = t.strip()
+        t = fix_topic_plurals(t)
         if not t or brand_lower in t.lower():
             continue
         if any(bp in t.lower() for bp in bad_patterns):
@@ -848,10 +864,32 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     parsed = _parse_json_list(raw_prompts)
     generated = [p.strip() for p in parsed if isinstance(p, str) and p.strip()]
 
+    # Common plural spelling corrections — AI sometimes writes agencys, companys etc.
+    PLURAL_FIXES = {
+        r'\bagencys\b': 'agencies',
+        r'\bcompanys\b': 'companies',
+        r'\bplatforms\b': 'platforms',  # already correct but keep
+        r'\bfirms\b': 'firms',          # already correct but keep
+        r'\bprovidors\b': 'providers',
+        r'\bvendors\b': 'vendors',       # already correct but keep
+        r'\bsoftwares\b': 'software',    # software is uncountable
+        r'\bsolution s\b': 'solutions',
+        r'\btools s\b': 'tools',
+        r'\bservices s\b': 'services',
+    }
+
+    import re as _re_plural
+
+    def fix_plurals(text):
+        for pattern, replacement in PLURAL_FIXES.items():
+            text = _re_plural.sub(pattern, replacement, flags=_re_plural.IGNORECASE)
+        return text
+
     # Filter and clean
     cleaned = []
     for p in generated:
         p = year_pattern.sub("", p).strip()
+        p = fix_plurals(p)
         if brand_lower in p.lower():
             continue
         if not is_citation_producing(p):
