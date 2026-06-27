@@ -2108,4 +2108,4 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    st.rerun()
+                    st.rerun() 
