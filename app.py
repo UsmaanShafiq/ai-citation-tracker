@@ -715,64 +715,69 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "Prompt 4 persona: " + personas[2] + "\n"
         + "Prompt 5 persona: " + personas[2] + "\n\n"
 
-        + "GENERATE EXACTLY 5 PROMPTS IN THIS EXACT STRUCTURE:\n\n"
+        + "GENERATE EXACTLY 5 PROMPTS IN THIS EXACT STRUCTURE — NO DEVIATION:\n\n"
 
         + "PROMPT 1 — PLAIN KEYWORD:\n"
-        + "The topic name exactly as written. Nothing added. No question mark.\n"
+        + "Topic name only. Nothing added. No question mark. No prefix.\n"
         + "CORRECT: '" + topic + "'\n\n"
 
-        + "PROMPT 2 — PERSONA (buyer: " + personas[0] + "):\n"
-        + "First person singular. MUST say 'I am a " + personas[0] + "' — singular not plural.\n"
-        + "References one of these differentiators naturally: " + ", ".join(top_features[:2] if top_features else ["the solution"]) + ".\n"
-        + "Ends with exactly: 'What would you suggest?' or 'Who should I choose?'\n"
-        + "CORRECT: 'I am a " + personas[0] + " and I need [differentiator] for [topic use case]. What would you suggest?'\n"
-        + "WRONG: 'I am a " + personas[0] + "s' (never pluralise the persona)\n"
-        + "WRONG: ends with anything other than 'What would you suggest?' or 'Who should I choose?'\n\n"
+        + "PROMPT 2 — CASUAL RECOMMENDATION (community style, third person):\n"
+        + "No persona. No 'I am a'. Community or neutral voice.\n"
+        + "Must start with one of: 'Can someone recommend' OR 'Who offers' OR 'Which companies provide'\n"
+        + "CORRECT: 'Can someone recommend a good " + category_word + " for [topic use case]?'\n"
+        + "CORRECT: 'Who offers the best [topic] " + category_word + "?'\n"
+        + "CORRECT: 'Which companies provide [topic use case] with [differentiator]?'\n"
+        + "WRONG: starts with 'I am a' or any first-person persona\n"
+        + "WRONG: starts with 'What' or 'How' (those are for prompt 3)\n\n"
 
-        + "PROMPT 3 — PERSONA (buyer: " + personas[1] + ", DIFFERENT from prompt 2):\n"
-        + "First person singular. MUST say 'I am a " + personas[1] + "' — singular not plural.\n"
-        + "Different differentiator angle from prompt 2. Use: " + ", ".join(top_features[1:3] if len(top_features) > 1 else ["the solution"]) + ".\n"
-        + "Ends with exactly: 'Any recommendations?' or 'Which would you go with?'\n"
-        + "CORRECT: 'I am a " + personas[1] + " looking for [different angle on topic]. Any recommendations?'\n"
-        + "WRONG: same persona as prompt 2\n"
-        + "WRONG: ends with anything other than 'Any recommendations?' or 'Which would you go with?'\n\n"
-
-        + "PROMPT 4 — HOW-TO OR INFORMATIONAL:\n"
-        + "Third person or neutral. NO persona. NO 'I am a'.\n"
-        + "Starts with 'How do I' OR 'What is the best way to' OR 'Which " + category_word + "s offer'.\n"
-        + "Focuses on the use case from the topic, not the buyer role.\n"
-        + "CORRECT: 'How do I find a " + category_word + " that offers [topic use case]?'\n"
-        + "CORRECT: 'Which " + category_word + "s offer [key feature from topic]?'\n"
+        + "PROMPT 3 — HOW-TO OR INFORMATIONAL (neutral, no persona):\n"
+        + "Third person or neutral. NO 'I am a'. NO community voice.\n"
+        + "Must start with one of: 'What is the best way to' OR 'How do I' OR 'Which " + category_word + "s offer'\n"
+        + "Focuses on use case from the topic.\n"
         + "CORRECT: 'What is the best way to [use case from topic]?'\n"
-        + "WRONG: starts with 'I am a' or contains a buyer persona\n\n"
+        + "CORRECT: 'How do I find a " + category_word + " for [topic use case]?'\n"
+        + "CORRECT: 'Which " + category_word + "s offer [key feature] for [topic]?'\n"
+        + "WRONG: starts with 'I am a' or 'Can someone'\n\n"
 
-        + "PROMPT 5 — COMPARISON:\n"
-        + "Directly compares " + brand_name + " against " + (comp_for_comparison[0] if comp_for_comparison else "a competitor") + ".\n"
+        + "PROMPT 4 — SINGLE PERSONA (buyer: " + personas[0] + "):\n"
+        + "First person singular. ONE buyer only.\n"
+        + "MUST say 'I am a " + personas[0] + "' — singular. NEVER 'I am a " + personas[0] + "s'\n"
+        + "Must naturally reference one of these differentiators: " + ", ".join(top_features[:2] if top_features else ["the solution"]) + "\n"
+        + "Must end with exactly: 'What would you suggest?' or 'Which would you go with?'\n"
+        + "CORRECT: 'I am a " + personas[0] + " and I need [differentiator] for [topic use case]. What would you suggest?'\n"
+        + "WRONG: plural persona, missing differentiator, wrong ending\n\n"
+
+        + "PROMPT 5 — COMPARISON (brand vs competitor):\n"
         + "This is the ONLY prompt where you may use the brand name '" + brand_name + "'.\n"
+        + "Directly compares " + brand_name + " against " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + ".\n"
         + "CORRECT: 'How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic use case]?'\n"
-        + "CORRECT: '" + brand_name + " vs " + (comp_for_comparison[0] if comp_for_comparison else "competitors") + " — which is better for [topic]?'\n\n"
+        + "CORRECT: '" + brand_name + " vs " + (comp_for_comparison[0] if comp_for_comparison else "competitors") + " — which is better for [specific need from topic]?'\n"
+        + "WRONG: does not name " + brand_name + " directly\n\n"
 
         + "ABSOLUTE RULES:\n"
-        + "- ALWAYS use singular persona: 'I am a researcher' NEVER 'I am a researchers'\n"
-        + "- NEVER repeat the same persona in prompts 2 and 3\n"
-        + "- NEVER generate advice-seeking prompts ('what should I look for')\n"
+        + "- Prompt 1: bare topic only\n"
+        + "- Prompt 2: starts with Can someone recommend / Who offers / Which companies provide\n"
+        + "- Prompt 3: starts with What is the best way to / How do I / Which " + category_word + "s offer\n"
+        + "- Prompt 4: first person singular, one persona, one differentiator, correct ending\n"
+        + "- Prompt 5: brand vs named competitor\n"
+        + "- NEVER pluralise persona: 'I am a researcher' not 'I am a researchers'\n"
         + "- NEVER use year numbers\n"
-        + "- NEVER abbreviate terms from TERM GLOSSARY above\n"
-        + "- Every prompt must cause ChatGPT to name specific " + category_word + "s\n\n"
+        + "- NEVER abbreviate terms from TERM GLOSSARY\n"
+        + "- Every prompt must make ChatGPT name specific " + category_word + "s\n\n"
 
         + "GOOD EXAMPLE SET for topic 'free AI patent search tool':\n"
         + "1. 'free AI patent search tool'\n"
-        + "2. 'I am a startup founder and I need a free AI tool to search patents before filing. What would you suggest?'\n"
-        + "3. 'I am an inventor looking for an open source patent search platform with no login required. Any recommendations?'\n"
-        + "4. 'Which patent search tools offer natural language queries and free access?'\n"
-        + "5. 'How does PQAI compare to Google Patents for prior art search?'\n\n"
+        + "2. 'Can someone recommend a free AI tool for searching patents before filing?'\n"
+        + "3. 'What is the best way to do prior art search using AI without paying for a tool?'\n"
+        + "4. 'I am a startup founder and I need a free open source patent search platform. What would you suggest?'\n"
+        + "5. 'How does PQAI compare to Google Patents for AI-powered prior art search?'\n\n"
 
-        + "BAD EXAMPLE SET (never do this):\n"
-        + "1. 'What are the best AI tools for patent searching?' (not the bare topic)\n"
-        + "2. 'I am a startup founders' (pluralised persona — WRONG)\n"
-        + "3. 'I am a startup founder...' again (same persona repeated from prompt 2 — WRONG)\n"
-        + "4. 'I am a researcher looking for...' (has persona — prompt 4 must be neutral)\n"
-        + "5. 'Which tools are best?' (does not name brand vs competitor)\n\n"
+        + "BAD EXAMPLE SET:\n"
+        + "1. 'best free AI patent search tool' (added 'best' — prompt 1 is bare topic only)\n"
+        + "2. 'I am a researcher...' (persona in prompt 2 — must be community voice)\n"
+        + "3. 'Can someone recommend...' (community voice in prompt 3 — must be how-to)\n"
+        + "4. 'I am a researchers...' (pluralised — always singular)\n"
+        + "5. 'Which tools are best?' (no brand name — must compare " + brand_name + " directly)\n\n"
 
         + "Return ONLY a JSON array of exactly 5 strings.\n"
         + "No markdown. No explanation.\n"
@@ -790,6 +795,11 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "who do you", "any recommendations", "what do you", "which one",
         "who offers", "who makes", "what would you", "what's your pick",
         "i am a", "i'm a", "i need",
+        # Prompt 2 starters — casual community recommendation
+        "can someone recommend", "which companies provide", "who offers",
+        # Prompt 3 starters — how-to and informational
+        "what is the best way to", "how do i", "which tools offer",
+        "which software offer", "which platforms offer", "which agencies offer",
     ]
     STATEMENT_SIGNALS = [
         "how to", "what is", "what are the benefits", "what does",
