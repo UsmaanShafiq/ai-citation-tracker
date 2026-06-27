@@ -551,19 +551,95 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     brand_lower = brand_name.lower()
 
-    # ── Fix 2a: Rotate through ALL customer personas ──────────────────────────
-    # Each prompt in the 5 gets a DIFFERENT persona — no repeats within a topic
-    customers_clean = [c.strip() for c in customers_list if c.strip()]
-    if not customers_clean:
-        customers_clean = ["professional", "business owner", "manager", "team lead", "researcher"]
+    # ── Persona rotation — no repeats within same topic group ───────────────
+    # All customer types get equal representation across topics.
+    # Within a single topic, each of the 3 persona prompts (2,3,5) uses a
+    # DIFFERENT persona. If list has 6 types, no type repeats until all used.
 
-    # Use topic hash to start at a different offset per topic
+    # Step 1: Singularise each customer label before use
+    # e.g. "startups" → "startup founder", "patent attorneys" → "patent attorney"
+    SINGULAR_MAP = {
+        "startups": "startup founder",
+        "inventors": "inventor",
+        "researchers": "researcher",
+        "developers": "developer",
+        "attorneys": "patent attorney",
+        "patent attorneys": "patent attorney",
+        "ip professionals": "IP professional",
+        "professionals": "professional",
+        "engineers": "engineer",
+        "managers": "manager",
+        "founders": "founder",
+        "scientists": "scientist",
+        "lawyers": "lawyer",
+        "students": "student",
+        "teams": "team lead",
+        "companies": "company owner",
+        "businesses": "business owner",
+    }
+
+    def _ensure_singular(label):
+        label = label.strip()
+        label_lower = label.lower()
+        # Check exact match in map
+        if label_lower in SINGULAR_MAP:
+            return SINGULAR_MAP[label_lower]
+        # Check partial match
+        for plural, singular in SINGULAR_MAP.items():
+            if label_lower == plural or label_lower.endswith(" " + plural):
+                return singular
+        # Generic suffix rules
+        if label.endswith("ies") and len(label) > 4:
+            return label[:-3] + "y"
+        if label.endswith("ers") and not label.endswith("eers"):
+            return label[:-1]
+        if label.endswith("ants") or label.endswith("ents"):
+            return label[:-1]
+        if label.endswith("ors") and len(label) > 4:
+            return label[:-1]
+        if label.endswith("sts"):
+            return label[:-1]
+        return label
+
+    customers_raw   = [c.strip() for c in customers_list if c.strip()]
+    customers_clean = [_ensure_singular(c) for c in customers_raw]
+    if not customers_clean:
+        customers_clean = [
+            "startup founder", "researcher", "developer",
+            "IP professional", "inventor", "professional"
+        ]
+
+    # Deduplicate while preserving order
+    seen_p = set()
+    customers_unique = []
+    for c in customers_clean:
+        if c.lower() not in seen_p:
+            seen_p.add(c.lower())
+            customers_unique.append(c)
+    customers_clean = customers_unique
+
+    # Rotate starting point per topic so different topics use different personas first
     topic_hash = sum(ord(c) for c in topic) % max(len(customers_clean), 1)
-    rotated_customers = customers_clean[topic_hash:] + customers_clean[:topic_hash]
-    # Ensure we have at least 4 unique personas for prompts 2-5
-    while len(rotated_customers) < 4:
-        rotated_customers = rotated_customers + rotated_customers
-    personas = rotated_customers[:4]  # 4 unique personas for prompts 2-5
+    rotated = customers_clean[topic_hash:] + customers_clean[:topic_hash]
+
+    # Take first 3 UNIQUE personas for prompts 2, 3, and 5
+    # Never repeat within the same topic group
+    personas = []
+    for c in rotated:
+        if c not in personas:
+            personas.append(c)
+        if len(personas) >= 3:
+            break
+    # Pad with generic singular labels if list is very short
+    fallback_personas = [
+        "startup founder", "inventor", "researcher",
+        "developer", "IP professional", "manager"
+    ]
+    for fp in fallback_personas:
+        if len(personas) >= 3:
+            break
+        if fp not in personas:
+            personas.append(fp)
 
     # ── Fix 2b: Top differentiators to include in prompts ────────────────────
     features_clean = [f.strip() for f in features_list if f.strip()][:6]
@@ -637,7 +713,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "Prompt 2 persona: " + personas[0] + "\n"
         + "Prompt 3 persona: " + personas[1] + "\n"
         + "Prompt 4 persona: " + personas[2] + "\n"
-        + "Prompt 5 persona: " + (personas[3] if len(personas) > 3 else personas[0]) + "\n\n"
+        + "Prompt 5 persona: " + personas[2] + "\n\n"
 
         + "GENERATE EXACTLY 5 PROMPTS IN THIS EXACT STRUCTURE:\n\n"
 
@@ -2108,4 +2184,4 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    st.rerun() 
+                    st.rerun()
