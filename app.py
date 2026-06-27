@@ -885,62 +885,77 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             text = _re_plural.sub(pattern, replacement, text, flags=_re_plural.IGNORECASE)
         return text
 
-    # Filter and clean
-    cleaned = []
-    for p in generated:
+    def _clean_prompt(p):
+        """Clean, fix plurals, strip years from a prompt string."""
         p = year_pattern.sub("", p).strip()
         p = fix_plurals(p)
-        if brand_lower in p.lower():
-            continue
-        if not is_citation_producing(p):
-            continue
-        cleaned.append(p)
-
-    # Retry if too few valid prompts
-    if len(cleaned) < 3:
-        raw2 = _call_ai_for_json(prompt)
-        parsed2 = _parse_json_list(raw2)
-        for p in parsed2:
-            if isinstance(p, str) and p.strip():
-                p = year_pattern.sub("", p.strip())
-                if brand_lower not in p.lower() and is_citation_producing(p):
-                    if p not in cleaned:
-                        cleaned.append(p)
+        return p
 
     def _too_similar(a, b):
-        """Returns True if two prompts are too similar to be useful as separate queries."""
+        """Returns True if two prompts are too similar to be useful."""
         a_words = set(a.lower().split())
         b_words = set(b.lower().split())
         if not a_words or not b_words:
             return False
         overlap = len(a_words & b_words) / min(len(a_words), len(b_words))
-        return overlap > 0.75  # More than 75% word overlap = too similar
+        return overlap > 0.75
 
-    # Build final 5: bare topic first, then up to 4 genuinely different prompts
+    def _is_acceptable(p, existing):
+        """Returns True if prompt passes all checks and is not a duplicate."""
+        if not p or len(p.strip()) < 5:
+            return False
+        if brand_lower in p.lower():
+            return False
+        if any(_too_similar(p, e) for e in existing):
+            return False
+        return True
+
+    # Filter and clean first batch
+    cleaned = []
+    for p in generated:
+        p = _clean_prompt(p)
+        if _is_acceptable(p, cleaned):
+            cleaned.append(p)
+
+    # Retry once if too few valid prompts
+    if len(cleaned) < 4:
+        raw2 = _call_ai_for_json(prompt)
+        parsed2 = _parse_json_list(raw2)
+        for p in parsed2:
+            if isinstance(p, str) and p.strip():
+                p = _clean_prompt(p)
+                if _is_acceptable(p, cleaned):
+                    cleaned.append(p)
+
+    # Build result — bare topic always first
     result = [topic_as_prompt]
     for p in cleaned:
-        if p.lower() == topic_as_prompt.lower():
-            continue
-        if p in result:
-            continue
-        # Reject if too similar to any already accepted prompt
-        if any(_too_similar(p, existing) for existing in result):
-            continue
-        result.append(p)
+        if _is_acceptable(p, result):
+            result.append(p)
         if len(result) >= 5:
             break
 
-    # Pad if still short
-    fallback_prompts = [
+    # Guaranteed fallbacks — always produce exactly 5
+    # These are simple but always valid buying-intent prompts
+    guaranteed_fallbacks = [
         "best " + topic,
-        "which " + category_word + "s are best for " + topic + "?",
+        "which " + category_word + " is best for " + topic + "?",
         "top " + topic + " " + category_word + "s",
+        "who offers the best " + topic + "?",
+        topic + " recommendations?",
     ]
-    for fp in fallback_prompts:
+    for fp in guaranteed_fallbacks:
         if len(result) >= 5:
             break
-        if fp not in result:
+        fp = fix_plurals(fp)
+        if _is_acceptable(fp, result):
             result.append(fp)
+
+    # Hard guarantee — if somehow still short, pad with simple variations
+    i = 1
+    while len(result) < 5:
+        result.append("best " + topic + " option " + str(i))
+        i += 1
 
     return result[:5]
 
