@@ -254,11 +254,15 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         "Key features: " + key_features + "\n"
     )
 
-    all_brand_text = (brand_context + products + " " + key_features).upper()
-    terms_to_check = {
-        term: meanings for term, meanings in AMBIGUOUS_TERMS.items()
-        if term in all_brand_text
-    }
+    import re as _re_terms
+    all_brand_text = brand_context + products + " " + key_features
+    # Only check terms that appear as standalone uppercase words (not substrings)
+    terms_to_check = {}
+    for term, meanings in AMBIGUOUS_TERMS.items():
+        # Match whole word only — "PR" must not match inside "prior" or "search"
+        pattern = _re_terms.compile(r'\b' + _re_terms.escape(term) + r'\b')
+        if pattern.search(all_brand_text):
+            terms_to_check[term] = meanings
 
     if not terms_to_check:
         brand_data["_resolved_terms"] = {}
@@ -587,13 +591,13 @@ def ai_generate_topics(brand_data: dict) -> list:
     ]
 
     # Also expand any abbreviated terms that slipped through in topics
-    # This is a safety net — the prompt should handle this but we verify
+    # Uses whole-word matching ONLY — never replaces substrings inside other words
+    # e.g. "PR" must not replace "PR" inside "providers" or "search"
+    import re as _re_expand
     for abbr, expansion in (resolved_terms or {}).items():
-        topics = [
-            t.replace(abbr, expansion).replace(abbr.lower(), expansion)
-            if abbr in t or abbr.lower() in t.lower() else t
-            for t in topics
-        ]
+        # Only replace if the abbreviation appears as a standalone word
+        pattern = _re_expand.compile(r'\b' + _re_expand.escape(abbr) + r'\b', _re_expand.IGNORECASE)
+        topics = [pattern.sub(expansion, t) for t in topics]
 
     filtered = []
     for t in topics:
