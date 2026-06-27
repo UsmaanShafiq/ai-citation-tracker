@@ -611,7 +611,7 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     def fix_topic_plurals(text):
         for pat, rep in TOPIC_PLURAL_FIXES.items():
-            text = _re_topic_plural.sub(pat, rep, flags=_re_topic_plural.IGNORECASE)
+            text = _re_topic_plural.sub(pat, rep, text, flags=_re_topic_plural.IGNORECASE)
         return text
 
     filtered = []
@@ -882,7 +882,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     def fix_plurals(text):
         for pattern, replacement in PLURAL_FIXES.items():
-            text = _re_plural.sub(pattern, replacement, flags=_re_plural.IGNORECASE)
+            text = _re_plural.sub(pattern, replacement, text, flags=_re_plural.IGNORECASE)
         return text
 
     # Filter and clean
