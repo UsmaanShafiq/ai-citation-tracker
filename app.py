@@ -55,23 +55,11 @@ def _get_key(env_key: str) -> str:
 
 
 def _call_ai_for_json(prompt: str) -> str:
-    """Call best available AI model for JSON generation (topics/prompts)."""
-    # GROQ DISABLED - uncomment below to re-enable
-    # groq_key = _get_key("GROQ_API_KEY")
-    # if groq_key:
-    #     try:
-    #         from groq import Groq
-    #         client = Groq(api_key=groq_key)
-    #         resp = client.chat.completions.create(
-    #             model="llama-3.3-70b-versatile",
-    #             messages=[{"role": "user", "content": prompt}],
-    #             max_tokens=2000,
-    #             temperature=0.7,
-    #         )
-    #         return resp.choices[0].message.content or ""
-    #     except Exception:
-    #         pass
-
+    """
+    Call best available AI model for JSON generation (topics/prompts).
+    Everything goes in user role. Temperature is default (low) for
+    structured JSON outputs like topic generation.
+    """
     # Try Gemini
     gemini_key = _get_key("GEMINI_API_KEY")
     if gemini_key:
@@ -98,7 +86,52 @@ def _call_ai_for_json(prompt: str) -> str:
         except Exception:
             pass
 
-    raise Exception("No available AI model. Please add at least one API key (Gemini, OpenAI, or Perplexity).")
+    raise Exception("No available AI model. Please add at least one API key.")
+
+
+def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
+    """
+    Dedicated function for prompt generation only.
+    Fix 1: system prompt in system role, topic in user role — separate fields.
+    Fix 2: temperature 0.8 — prevents repetitive/duplicate outputs.
+    Only uses OpenAI (system role support). Falls back to Gemini if needed.
+    """
+    # Try OpenAI with proper system/user split and temperature
+    openai_key = _get_key("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_message},
+                ],
+                max_tokens=2000,
+                temperature=0.8,  # High enough for variety, low enough for structure
+            )
+            return resp.choices[0].message.content or ""
+        except Exception:
+            pass
+
+    # Fallback: Gemini (no system role, combine into single prompt)
+    gemini_key = _get_key("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            from google import genai
+            client = genai.Client(api_key=gemini_key)
+            combined = system_prompt + "\n\n" + user_message
+            resp = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=combined,
+                config={"temperature": 0.8}
+            )
+            return resp.text or ""
+        except Exception:
+            pass
+
+    raise Exception("No available AI model for prompt generation.")
 
 
 def _parse_json_list(text: str) -> list:
@@ -702,7 +735,13 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     _p3_starters = ['Are there any', 'Where can I find', 'Which companies offer', 'Who provides', 'Is there a', 'What companies specialize in', 'Which platforms offer']
     _p3_opener = _p3_starters[topic_hash % len(_p3_starters)]
-    prompt = (
+    # ── Fix 1: Split into system prompt (rules/persona) and user message (task) ──
+    # System role = GEO strategist identity + all rules
+    # User role   = brand context + specific topic to generate for
+    # This separation is critical — system prompt sets consistent behavior,
+    # user message provides the variable per-topic input.
+
+    system_prompt = (
         "You are an expert GEO (Generative Engine Optimization) strategist who deeply "
         "understands how real people search for products, services, software, and information "
         "using AI tools like ChatGPT, Perplexity, and Gemini across every industry and niche.\n\n"
@@ -716,9 +755,29 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
         "Your job is to generate 5 prompts per topic that sound exactly like how a real person "
         "in that specific industry and buyer role would type into an AI tool. Study the brand "
-        "context below before generating anything.\n\n"
+        "context carefully before generating anything. Every prompt must feel native to that "
+        "brand\'s world, not generic.\n\n"
 
-        + term_glossary
+        "CRITICAL RULES — apply to every brand in every niche:\n"
+        "1. NEVER generate the same prompt twice within a topic. Each must differ in wording, structure, and intent.\n"
+        "2. NEVER start two prompts in the same topic with the same word or phrase.\n"
+        "3. Every prompt must contain at least one word or phrase from the topic name.\n"
+        "4. NEVER write prompts so generic they could apply to any brand or any topic.\n"
+        "5. GRAMMAR: always singular persona — \'I am a researcher\' NEVER \'I am a researchers\'\n"
+        "6. NEVER use year numbers.\n"
+        "7. NEVER abbreviate industry terms — always write the full phrase.\n"
+        "8. If any prompt looks similar to another — stop, rewrite from a completely different angle.\n\n"
+
+        "OUTPUT FORMAT:\n"
+        "Return ONLY a JSON array of exactly 5 strings.\n"
+        "No markdown. No explanation. No numbering outside the JSON.\n"
+        "Example: [\"prompt1\", \"prompt2\", \"prompt3\", \"prompt4\", \"prompt5\"]"
+    )
+
+    user_message = (
+        "Generate exactly 5 prompts for the topic below. Follow the 5-prompt structure precisely.\n\n"
+
+        + (term_glossary if term_glossary else "")
 
         + "BRAND CONTEXT:\n"
         + "Business type: " + business_type + "\n"
@@ -726,66 +785,41 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "Target customers: " + ", ".join(customers_clean[:5]) + "\n"
         + "Key differentiators: " + ", ".join(features_clean[:4]) + "\n"
         + "Solution type: " + category_word + "\n"
-        + avoid_word
+        + (avoid_word if avoid_word else "")
         + "\nTOPIC: \"" + topic + "\"\n"
-        + "Persona for prompt 4: " + personas[0] + "\n\n"
+        + "Persona for prompt 4: " + personas[0] + " (singular — never pluralise)\n\n"
 
-        + "GENERATE EXACTLY 5 PROMPTS — FOLLOW THIS STRUCTURE WITH NO DEVIATION:\n\n"
+        + "5-PROMPT STRUCTURE — follow exactly, no deviation:\n\n"
 
         + "PROMPT 1 — PLAIN KEYWORD:\n"
-        + "Copy the topic phrase exactly as written. Nothing added. Nothing changed.\n"
-        + "Output: '" + topic + "'\n\n"
+        + "Copy the topic phrase exactly as written: '" + topic + "'\n\n"
 
         + "PROMPT 2 — DIRECT BEST-OF QUESTION:\n"
-        + "No persona. No first person. A direct best-of question.\n"
-        + "Start with one of: 'What\'s the best' / 'What are some good' / 'Who offers the best' / 'Which tools provide' / 'What are the top'\n"
-        + "Phrasing must feel natural for this specific industry and topic.\n"
-        + "Must contain at least one word from the topic name.\n"
-        + "CORRECT for patent software: 'What\'s the best free AI tool for prior art search?'\n"
-        + "CORRECT for training: 'Who offers the best Fortinet NSE certification training?'\n"
-        + "CORRECT for agency: 'What are the top B2B SaaS content marketing agencies?'\n\n"
+        + "No persona. No first person. Start with: \'What\'s the best\' OR \'What are some good\' OR \'Who offers the best\' OR \'Which tools provide\' OR \'What are the top\'\n"
+        + "Must feel natural for this specific industry. Must contain a word from the topic.\n\n"
 
         + "PROMPT 3 — CASUAL DISCOVERY QUESTION:\n"
-        + "No persona. Third person or neutral. Community or discovery style.\n"
-        + "Must start with: '" + _p3_opener + "'\n"
-        + "Must contain at least one word from the topic name.\n"
-        + "CORRECT: '" + _p3_opener + " [topic-specific discovery question]?'\n"
-        + "WRONG: starts with the same opener as another topic\'s prompt 3\n\n"
+        + "No persona. Third person or neutral. Start with: '" + _p3_opener + "'\n"
+        + "Must contain a word from the topic. Community or discovery style.\n\n"
 
-        + "PROMPT 4 — CASUAL FIRST-PERSON PROMPT:\n"
-        + "Use persona: " + personas[0] + "\n"
-        + "Written exactly how this specific buyer in this industry would type into ChatGPT.\n"
-        + "Short. Natural. Casual. Not formal or corporate.\n"
-        + "Must reference at least one differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
-        + "Must contain at least one word from the topic name.\n"
-        + "GRAMMAR RULE: use singular persona — 'I\'m a " + personas[0] + "' NEVER 'I\'m a " + personas[0] + "s'\n"
-        + "INDUSTRY EXAMPLES:\n"
-        + "  SaaS tools: \'I\'m a developer and need a free patent search API with no login, any suggestions?\'\n"
+        + "PROMPT 4 — CASUAL FIRST-PERSON:\n"
+        + "Persona: " + personas[0] + " (use singular — \'I\'m a " + personas[0] + "\' or \'I am a " + personas[0] + "\')\n"
+        + "Short and natural. How this specific buyer in this industry actually types.\n"
+        + "Reference at least one differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
+        + "Must contain a word from the topic.\n"
+        + "Good examples by industry:\n"
+        + "  SaaS: \'I\'m a developer and need a free patent search API with no login, any suggestions?\'\n"
         + "  Training: \'we need to get our network team Fortinet certified, what\'s the best provider?\'\n"
-        + "  Agency: \'looking for a content agency that actually understands B2B SaaS, any recommendations?\'\n"
-        + "  Legal tech: \'I\'m an inventor and need to do a prior art search before filing, what tool should I use?\'\n\n"
+        + "  Agency: \'looking for a content agency that actually understands B2B SaaS, recommendations?\'\n\n"
 
         + "PROMPT 5 — HOW-TO OR EXPLANATORY:\n"
-        + "No persona. Neutral. Process or use-case focused.\n"
-        + "Start with one of: 'How do I' / 'How does' / 'What\'s the best way to' / 'How can I' / 'How do companies'\n"
-        + "Must contain at least one word from the topic name.\n"
-        + "CORRECT: 'How do I find a " + category_word + " that specialises in [topic]?'\n"
-        + "CORRECT: 'What\'s the best way to [use case from topic]?'\n\n"
+        + "No persona. Neutral. Start with: \'How do I\' OR \'How does\' OR \'What\'s the best way to\' OR \'How can I\' OR \'How do companies\'\n"
+        + "Process or use-case focused. Must contain a word from the topic.\n\n"
 
-        + "CRITICAL RULES — READ BEFORE WRITING ANY PROMPT:\n"
-        + "1. NEVER generate the same prompt twice. Each must be different in wording, structure, and intent.\n"
-        + "2. NEVER start two prompts in this topic with the same word or phrase.\n"
-        + "3. Every prompt must contain at least one word or phrase from the topic name.\n"
-        + "4. NEVER write prompts so generic they could apply to any brand or any topic.\n"
-        + "5. NEVER pluralise persona: 'I am a " + personas[0] + "' not 'I am a " + personas[0] + "s'\n"
-        + "6. NEVER mention '" + brand_name + "' in prompts 1-4. Only prompt 5 may use it.\n"
-        + "7. NEVER use year numbers.\n"
-        + "8. NEVER abbreviate terms from the TERM GLOSSARY above.\n"
-        + "9. If any prompt looks similar to another — stop, rewrite from a different angle.\n\n"
-
-        + "Return ONLY a JSON array of exactly 5 strings.\n"
-        + "No markdown. No explanation. No numbering outside the JSON.\n"
-        + '["prompt1", "prompt2", "prompt3", "prompt4", "prompt5"]'
+        + "REMINDER: Every prompt must be different in structure and wording. "
+        + "No two prompts may start with the same word. "
+        + "Prompt 5 is the ONLY one that may use the brand name \"" + brand_name + "\".\n"
+        + "Return ONLY the JSON array."
     )
 
     import re as _re_year
@@ -887,13 +921,13 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         p = _fix_persona(p)
         return p
     # Generate prompts
-    raw_prompts = _call_ai_for_json(prompt)
+    raw_prompts = _call_ai_for_prompts(system_prompt, user_message)
     parsed = _parse_json_list(raw_prompts)
     generated = [_clean(p) for p in parsed if isinstance(p, str) and p.strip()]
 
-    # Retry once if too few
+    # Retry once if too few valid prompts
     if len(generated) < 4:
-        raw2   = _call_ai_for_json(prompt)
+        raw2    = _call_ai_for_prompts(system_prompt, user_message)
         parsed2 = _parse_json_list(raw2)
         for p in parsed2:
             if isinstance(p, str) and p.strip():
@@ -932,7 +966,52 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     while len(result) < 5:
         result.append("best " + topic)
 
-    return result[:5]
+    result = result[:5]
+
+    # ── Fix 3: Duplicate validation — auto-regenerate if duplicates found ─────
+    # Check for identical prompts or prompts starting with the same 4 words.
+    # If found, regenerate once before returning. Never show duplicates to user.
+    def _has_duplicates(prompts):
+        """Returns True if any two prompts are identical or share first 4 words."""
+        seen_full  = set()
+        seen_start = set()
+        for p in prompts[1:]:  # Skip prompt 1 (bare topic — always unique)
+            p_lower = p.lower().strip()
+            first4  = " ".join(p_lower.split()[:4])
+            if p_lower in seen_full or first4 in seen_start:
+                return True
+            seen_full.add(p_lower)
+            seen_start.add(first4)
+        return False
+
+    if _has_duplicates(result):
+        # Regenerate with a slightly different temperature signal in the message
+        regen_message = user_message + (
+            "\n\nIMPORTANT: The previous generation had duplicate prompts. "
+            "Each of the 5 prompts must be completely different in wording and structure. "
+            "Start each prompt with a different word. No two prompts may be similar."
+        )
+        try:
+            raw_regen   = _call_ai_for_prompts(system_prompt, regen_message)
+            parsed_regen = _parse_json_list(raw_regen)
+            regen_clean  = [_clean(p) for p in parsed_regen if isinstance(p, str) and p.strip()]
+
+            regen_result = [topic.strip()]
+            for p in regen_clean:
+                if _is_acceptable(p, regen_result):
+                    regen_result.append(p)
+                if len(regen_result) >= 5:
+                    break
+
+            # Only use regen if it is actually better (fewer duplicates)
+            if not _has_duplicates(regen_result) or len(regen_result) >= len(result):
+                while len(regen_result) < 5:
+                    regen_result.append("best " + topic)
+                result = regen_result[:5]
+        except Exception:
+            pass  # Keep original result if regen fails
+
+    return result
 
 
 
