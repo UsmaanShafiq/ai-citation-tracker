@@ -1125,6 +1125,19 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
 
 
+BRAND_FALSE_POSITIVES = {
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "as", "is", "it", "its", "this", "that",
+    "are", "was", "be", "has", "have", "had", "do", "does", "did", "not",
+    "no", "yes", "so", "we", "us", "our", "you", "your", "they", "their",
+    "he", "she", "his", "her", "i", "my", "me", "up", "out", "if", "then",
+    "than", "more", "most", "also", "just", "can", "will", "may", "new",
+    "top", "best", "free", "data", "time", "work", "use", "used", "get",
+    "set", "go", "see", "say", "type", "list", "note", "via", "key",
+    "pro", "api", "app", "web", "net", "inc", "llc", "ltd", "co",
+}
+
+
 def is_false_positive_brand(name: str) -> bool:
     """Returns True if this name is likely a false positive, not a real brand."""
     name_lower = name.lower().strip()
