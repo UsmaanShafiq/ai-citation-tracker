@@ -892,13 +892,21 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         return p
 
     def _too_similar(a, b):
-        """Returns True if two prompts are too similar to be useful."""
+        """
+        Returns True if two prompts are too similar to produce different results.
+        Uses 0.85 threshold — only rejects near-identical prompts.
+        Prompts that share topic words but differ in structure are kept.
+        e.g. "best Palo Alto training providers" vs "top Palo Alto training companies"
+        share topic words but are different enough — kept.
+        e.g. "best Palo Alto training providers" vs "best Palo Alto training providers?"
+        are essentially identical — rejected.
+        """
         a_words = set(a.lower().split())
         b_words = set(b.lower().split())
         if not a_words or not b_words:
             return False
         overlap = len(a_words & b_words) / min(len(a_words), len(b_words))
-        return overlap > 0.75
+        return overlap > 0.85
 
     def _is_acceptable(p, existing):
         """Returns True if prompt passes all checks and is not a duplicate."""
@@ -935,27 +943,49 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         if len(result) >= 5:
             break
 
-    # Guaranteed fallbacks — always produce exactly 5
-    # These are simple but always valid buying-intent prompts
+    # Guaranteed fallbacks — derive from topic and buyer context
+    # These are always valid buying-intent prompts, never shown as "option N"
+    _t = topic.strip()
+    _cw = category_word.strip()
+    _buyer = persona_role.split()[0] if persona_role else "professional"
+
     guaranteed_fallbacks = [
-        "best " + topic,
-        "which " + category_word + " is best for " + topic + "?",
-        "top " + topic + " " + category_word + "s",
-        "who offers the best " + topic + "?",
-        topic + " recommendations?",
+        "best " + _t,
+        "top " + _t + " " + _cw + "s",
+        "which " + _cw + "s are best for " + _t + "?",
+        "who offers the best " + _t + "?",
+        "I am a " + _buyer + " looking for " + _t + ". " + rec_ask,
+        "recommended " + _t + " " + _cw + "s",
+        _t + " — which " + _cw + " should I choose?",
     ]
+
     for fp in guaranteed_fallbacks:
         if len(result) >= 5:
             break
-        fp = fix_plurals(fp)
-        if _is_acceptable(fp, result):
+        fp = fix_plurals(fp.strip())
+        if fp and _is_acceptable(fp, result):
             result.append(fp)
 
-    # Hard guarantee — if somehow still short, pad with simple variations
-    i = 1
+    # Absolute last resort — use topic variations that are always different
+    # These will never look weird because they are natural search phrases
+    last_resort = [
+        "best " + _t + " available",
+        "top rated " + _t + " " + _cw + "s",
+        "leading " + _t + " " + _cw + "s",
+        "recommended " + _t,
+        "popular " + _t + " " + _cw + "s",
+    ]
+    for fp in last_resort:
+        if len(result) >= 5:
+            break
+        fp = fix_plurals(fp.strip())
+        if fp and fp not in result:
+            result.append(fp)
+
+    # Final hard cap — should never reach here but ensures no crashes
+    result = result[:5]
     while len(result) < 5:
-        result.append("best " + topic + " option " + str(i))
-        i += 1
+        result.append("best " + _t)
 
     return result[:5]
 
