@@ -794,31 +794,39 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "PROMPT 1 — PLAIN KEYWORD:\n"
         + "Copy the topic phrase exactly as written: '" + topic + "'\n\n"
 
-        + "PROMPT 2 — DIRECT BEST-OF QUESTION:\n"
-        + "No persona. No first person. Start with: \'What\'s the best\' OR \'What are some good\' OR \'Who offers the best\' OR \'Which tools provide\' OR \'What are the top\'\n"
-        + "Must feel natural for this specific industry. Must contain a word from the topic.\n\n"
+        + "PROMPT 2 — must start with WHO or WHICH (best is banned):\n"
+        + "MUST begin with Who or Which. No other opener allowed. Never use best.\n"
+        + "No persona. No first person.\n"
+        + "CORRECT: Who provides " + category_word + "s for [topic use case]?\n"
+        + "CORRECT: Which " + category_word + "s specialize in [topic]?\n"
+        + "WRONG: best — completely banned from this prompt.\n\n"
 
-        + "PROMPT 3 — CASUAL DISCOVERY QUESTION:\n"
-        + "No persona. Third person or neutral. Start with: '" + _p3_opener + "'\n"
-        + "Must contain a word from the topic. Community or discovery style.\n\n"
+        + "PROMPT 3 — must start with " + _p3_opener + " (best is banned):\n"
+        + "MUST begin with " + _p3_opener + ". No other opener.\n"
+        + "No persona. Neutral. Never use best.\n"
+        + "CORRECT: " + _p3_opener + " [specific question about topic]?\n"
+        + "WRONG: best — banned in prompt 3.\n\n"
 
-        + "PROMPT 4 — CASUAL FIRST-PERSON:\n"
-        + "Persona: " + personas[0] + " (use singular — \'I\'m a " + personas[0] + "\' or \'I am a " + personas[0] + "\')\n"
-        + "Short and natural. How this specific buyer in this industry actually types.\n"
-        + "Reference at least one differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
-        + "Must contain a word from the topic.\n"
-        + "Good examples by industry:\n"
-        + "  SaaS: \'I\'m a developer and need a free patent search API with no login, any suggestions?\'\n"
-        + "  Training: \'we need to get our network team Fortinet certified, what\'s the best provider?\'\n"
-        + "  Agency: \'looking for a content agency that actually understands B2B SaaS, recommendations?\'\n\n"
+        + "PROMPT 4 — must start with I or we (best banned):\n"
+        + "MUST begin with I or we. No other opener.\n"
+        + "Persona: " + personas[0] + " singular only.\n"
+        + "Short casual. How this buyer actually types.\n"
+        + "Reference a differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
+        + "CORRECT: Im a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
+        + "WRONG: starts with best.\n\n"
 
-        + "PROMPT 5 — HOW-TO OR EXPLANATORY:\n"
-        + "No persona. Neutral. Start with: \'How do I\' OR \'How does\' OR \'What\'s the best way to\' OR \'How can I\' OR \'How do companies\'\n"
-        + "Process or use-case focused. Must contain a word from the topic.\n\n"
+        + "PROMPT 5 — must start with How does " + brand_name + " or " + brand_name + " vs:\n"
+        + "Only prompt allowed to name " + brand_name + " directly.\n"
+        + "Compare against " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + ".\n"
+        + "CORRECT: How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic]?\n\n"
 
-        + "REMINDER: Every prompt must be different in structure and wording. "
-        + "No two prompts may start with the same word. "
-        + "Prompt 5 is the ONLY one that may use the brand name \"" + brand_name + "\".\n"
+        + "MANDATORY STARTERS:\n"
+        + "Prompt 1: bare topic\n"
+        + "Prompt 2: Who OR Which\n"
+        + "Prompt 3: " + _p3_opener + "\n"
+        + "Prompt 4: I OR we\n"
+        + "Prompt 5: How does " + brand_name + " OR " + brand_name + " vs\n"
+        + "BEST is banned from prompts 2 3 and 4. No two prompts start with the same word.\n"
         + "Return ONLY the JSON array."
     )
 
@@ -972,14 +980,43 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     # Check for identical prompts or prompts starting with the same 4 words.
     # If found, regenerate once before returning. Never show duplicates to user.
     def _has_duplicates(prompts):
-        """Returns True if any two prompts are identical or share first 4 words."""
+        """
+        Returns True if any two prompts are too similar.
+        Checks:
+        1. Identical prompts
+        2. Same first 4 words
+        3. Prompt 2-5 contains 70%+ of the words from prompt 1 (topic echo)
+        """
+        if not prompts:
+            return False
         seen_full  = set()
         seen_start = set()
-        for p in prompts[1:]:  # Skip prompt 1 (bare topic — always unique)
+
+        # Get core words from prompt 1 (the bare topic) for echo detection
+        topic_words = set(prompts[0].lower().split()) if prompts else set()
+        STOP_WORDS  = {"the","a","an","for","of","in","to","and","or","is","are",
+                       "what","which","how","who","best","top","good","some","any"}
+        topic_core  = topic_words - STOP_WORDS
+
+        for p in prompts[1:]:
             p_lower = p.lower().strip()
             first4  = " ".join(p_lower.split()[:4])
-            if p_lower in seen_full or first4 in seen_start:
+            p_words = set(p_lower.split()) - STOP_WORDS
+
+            # Check identical
+            if p_lower in seen_full:
                 return True
+            # Check same start
+            if first4 in seen_start:
+                return True
+            # Check topic echo — prompt is just the topic with wrapper words added
+            if topic_core and len(topic_core) >= 2:
+                overlap = len(p_words & topic_core) / len(topic_core)
+                if overlap >= 0.75:
+                    # Only flag if the prompt is short (not a long detailed prompt)
+                    if len(p_lower.split()) <= len(prompts[0].split()) + 5:
+                        return True
+
             seen_full.add(p_lower)
             seen_start.add(first4)
         return False
@@ -2277,4 +2314,41 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    st.rerun()
+                    st.rerun(        + "PROMPT 2 — must start with WHO or WHICH (best is banned):\n"
+        + "MUST begin with Who or Which. No exceptions. Never use the word best.\n"
+        + "No persona. No first person.\n"
+        + "CORRECT: Who provides reliable " + category_word + " for [topic use case]?\n"
+        + "CORRECT: Which " + category_word + "s handle [topic] well?\n"
+        + "WRONG: Whats the best — banned. WRONG: best — banned.\n\n"
+
+        + "PROMPT 3 — must start with " + _p3_opener + " (best is banned):\n"
+        + "MUST begin with exactly: " + _p3_opener + ". No other opener.\n"
+        + "No persona. Neutral. Never use the word best.\n"
+        + "CORRECT: " + _p3_opener + " [specific question about topic]?\n"
+        + "WRONG: best — banned in prompt 3.\n\n"
+
+        + "PROMPT 4 — must start with I or we (best banned at start):\n"
+        + "MUST begin with I or we. No other opener.\n"
+        + "Persona: " + personas[0] + " singular. Never pluralise.\n"
+        + "Short casual. How this buyer actually types.\n"
+        + "Reference a differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
+        + "CORRECT: Im a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
+        + "CORRECT: we need [topic] with [differentiator], any recommendations?\n"
+        + "WRONG: starts with best or Whats the best.\n\n"
+
+        + "PROMPT 5 — must start with How does " + brand_name + " or " + brand_name + " vs:\n"
+        + "MUST begin with How does " + brand_name + " or " + brand_name + " vs.\n"
+        + "Only prompt allowed to name " + brand_name + " directly.\n"
+        + "Compare against " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + ".\n"
+        + "CORRECT: How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic]?\n\n"
+
+        + "MANDATORY STARTERS — enforced strictly:\n"
+        + "Prompt 1: bare topic\n"
+        + "Prompt 2: Who OR Which\n"
+        + "Prompt 3: " + _p3_opener + "\n"
+        + "Prompt 4: I OR we\n"
+        + "Prompt 5: How does " + brand_name + " OR " + brand_name + " vs\n"
+        + "The word BEST is completely banned from prompts 2, 3, and 4.\n"
+        + "No two prompts may start with the same word.\n"
+        + "Return ONLY the JSON array."
+    )
