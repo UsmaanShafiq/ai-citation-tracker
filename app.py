@@ -59,7 +59,11 @@ def _call_ai_for_json(prompt: str) -> str:
     Call best available AI model for JSON generation (topics/prompts).
     Everything goes in user role. Temperature is default (low) for
     structured JSON outputs like topic generation.
+    Errors are surfaced rather than silently swallowed so callers can
+    show meaningful messages and aid debugging.
     """
+    last_error = None
+
     # Try Gemini
     gemini_key = _get_key("GEMINI_API_KEY")
     if gemini_key:
@@ -68,8 +72,8 @@ def _call_ai_for_json(prompt: str) -> str:
             client = genai.Client(api_key=gemini_key)
             resp = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
             return resp.text or ""
-        except Exception:
-            pass
+        except Exception as e:
+            last_error = f"Gemini error: {e}"
 
     # Try OpenAI
     openai_key = _get_key("OPENAI_API_KEY")
@@ -83,10 +87,11 @@ def _call_ai_for_json(prompt: str) -> str:
                 max_tokens=2000,
             )
             return resp.choices[0].message.content or ""
-        except Exception:
-            pass
+        except Exception as e:
+            last_error = f"OpenAI error: {e}"
 
-    raise Exception("No available AI model. Please add at least one API key.")
+    detail = f" Last error: {last_error}" if last_error else ""
+    raise Exception(f"No available AI model. Please add at least one API key.{detail}")
 
 
 def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
@@ -96,6 +101,8 @@ def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
     Fix 2: temperature 0.8 — prevents repetitive/duplicate outputs.
     Only uses OpenAI (system role support). Falls back to Gemini if needed.
     """
+    last_error = None
+
     # Try OpenAI with proper system/user split and temperature
     openai_key = _get_key("OPENAI_API_KEY")
     if openai_key:
@@ -112,8 +119,8 @@ def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
                 temperature=0.8,  # High enough for variety, low enough for structure
             )
             return resp.choices[0].message.content or ""
-        except Exception:
-            pass
+        except Exception as e:
+            last_error = f"OpenAI error: {e}"
 
     # Fallback: Gemini (no system role, combine into single prompt)
     gemini_key = _get_key("GEMINI_API_KEY")
@@ -128,10 +135,11 @@ def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
                 config={"temperature": 0.8}
             )
             return resp.text or ""
-        except Exception:
-            pass
+        except Exception as e:
+            last_error = f"Gemini error: {e}"
 
-    raise Exception("No available AI model for prompt generation.")
+    detail = f" Last error: {last_error}" if last_error else ""
+    raise Exception(f"No available AI model for prompt generation.{detail}")
 
 
 def _parse_json_list(text: str) -> list:
@@ -140,9 +148,10 @@ def _parse_json_list(text: str) -> list:
         result = json.loads(text)
         if isinstance(result, list):
             return result
-        for v in result.values():
-            if isinstance(v, list):
-                return v
+        if isinstance(result, dict):
+            for v in result.values():
+                if isinstance(v, list):
+                    return v
     except Exception:
         pass
     match = re.search(r'\[[\s\S]*?\]', text)
@@ -151,8 +160,16 @@ def _parse_json_list(text: str) -> list:
             return json.loads(match.group())
         except Exception:
             pass
-    # fallback: extract quoted strings
-    return re.findall(r'"([^"]{5,200})"', text)
+    # Fallback: extract quoted strings that look like real topics/prompts.
+    # Guard against pulling in error messages or metadata by requiring that
+    # candidates contain at least one space (i.e. they're multi-word phrases)
+    # and don't start with common error/meta words.
+    _noise_prefixes = ("error", "sorry", "unable", "cannot", "invalid", "note:", "warning")
+    candidates = re.findall(r'"([^"]{5,200})"', text)
+    return [
+        c for c in candidates
+        if " " in c and not c.lower().startswith(_noise_prefixes)
+    ]
 
 
 
@@ -182,12 +199,19 @@ def fetch_brand_website(domain: str) -> str:
         "Accept-Language": "en-US,en;q=0.5",
     }
 
-    # Try multiple URL variants to maximize success rate
+    # Try multiple URL variants to maximize success rate.
+    # Only add www. variant if the URL doesn't already have it.
+    # Only add http:// variant if the domain doesn't respond on https
+    # (avoids adding www.www. for already-prefixed domains and wastes fewer requests).
     urls_to_try = [url]
     if not url.startswith("https://www."):
-        urls_to_try.append(url.replace("https://", "https://www.", 1))
-    if url.startswith("https://"):
-        urls_to_try.append(url.replace("https://", "http://", 1))
+        www_url = url.replace("https://", "https://www.", 1)
+        if www_url not in urls_to_try:
+            urls_to_try.append(www_url)
+    # http fallback only for domains that genuinely don't redirect to https
+    http_url = url.replace("https://", "http://", 1)
+    if http_url not in urls_to_try:
+        urls_to_try.append(http_url)
 
     html = ""
     for try_url in urls_to_try:
@@ -289,11 +313,12 @@ def resolve_brand_terms(brand_data: dict) -> dict:
 
     import re as _re_terms
     all_brand_text = brand_context + products + " " + key_features
-    # Only check terms that appear as standalone uppercase words (not substrings)
+    # Only check terms that appear as standalone words (not substrings).
+    # IGNORECASE so "geo" in lowercase product text still matches "GEO" in the dict.
     terms_to_check = {}
     for term, meanings in AMBIGUOUS_TERMS.items():
         # Match whole word only — "PR" must not match inside "prior" or "search"
-        pattern = _re_terms.compile(r'\b' + _re_terms.escape(term) + r'\b')
+        pattern = _re_terms.compile(r'\b' + _re_terms.escape(term) + r'\b', _re_terms.IGNORECASE)
         if pattern.search(all_brand_text):
             terms_to_check[term] = meanings
 
@@ -812,7 +837,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         + "Persona: " + personas[0] + " singular only.\n"
         + "Short casual. How this buyer actually types.\n"
         + "Reference a differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
-        + "CORRECT: Im a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
+        + "CORRECT: I'm a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
         + "WRONG: starts with best.\n\n"
 
         + "PROMPT 5 — must start with How does " + brand_name + " or " + brand_name + " vs:\n"
@@ -951,16 +976,16 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         if len(result) >= 5:
             break
 
-    # Guaranteed fallbacks — natural, never weird
+    # Guaranteed fallbacks — natural, GEO-safe (no banned words like "best" or "top rated")
     _cw = category_word
     _buyer0 = personas[0] if personas else "professional"
     _buyer1 = personas[1] if len(personas) > 1 else "manager"
     guaranteed = [
         "I am a " + _buyer0 + " and I need " + topic + ". " + rec_ask_1,
         "I am a " + _buyer1 + " looking for " + topic + ". " + rec_ask_2,
-        "which " + _cw + " is best for " + topic + "?",
-        "best " + topic + " " + _cw,
-        "top rated " + topic + " " + _cw + "s",
+        "which " + _cw + " handles " + topic + " well?",
+        "who provides " + topic + " for " + (_buyer0.split()[0] if _buyer0 else "teams") + "?",
+        "which " + _cw + "s specialize in " + topic + "?",
         "recommended " + topic + " for " + (_buyer0.split()[0] if _buyer0 else "teams"),
     ]
     for fb in guaranteed:
@@ -970,9 +995,19 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         if _is_acceptable(fb, result):
             result.append(fb)
 
-    # Hard pad — should never reach here
+    # Hard pad — should never reach here, but ensures exactly 5 prompts are returned.
+    # Uses GEO-safe phrasing (no banned words like "best").
+    _pad_idx = 0
+    _pad_templates = [
+        "which " + category_word + " is right for " + topic + "?",
+        "who offers " + topic + "?",
+        "I need " + topic + " — any suggestions?",
+        "where can I find " + topic + "?",
+        "what " + category_word + " covers " + topic + "?",
+    ]
     while len(result) < 5:
-        result.append("best " + topic)
+        result.append(_pad_templates[_pad_idx % len(_pad_templates)])
+        _pad_idx += 1
 
     result = result[:5]
 
@@ -997,6 +1032,11 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         STOP_WORDS  = {"the","a","an","for","of","in","to","and","or","is","are",
                        "what","which","how","who","best","top","good","some","any"}
         topic_core  = topic_words - STOP_WORDS
+
+        # Seed with prompt[0] so any later identical prompt is correctly caught
+        p0_lower = prompts[0].lower().strip()
+        seen_full.add(p0_lower)
+        seen_start.add(" ".join(p0_lower.split()[:4]))
 
         for p in prompts[1:]:
             p_lower = p.lower().strip()
@@ -1042,8 +1082,10 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
             # Only use regen if it is actually better (fewer duplicates)
             if not _has_duplicates(regen_result) or len(regen_result) >= len(result):
+                _rpad = 0
                 while len(regen_result) < 5:
-                    regen_result.append("best " + topic)
+                    regen_result.append(_pad_templates[_rpad % len(_pad_templates)])
+                    _rpad += 1
                 result = regen_result[:5]
         except Exception:
             pass  # Keep original result if regen fails
@@ -2198,33 +2240,6 @@ elif st.session_state.step == 4:
                                     else:
                                         st.caption("No response recorded.")
 
-            # ── Competitor ranking - 3 dynamic categories ───────────────
-            st.subheader("Brands Detected in AI Responses")
-            st.caption("Brands are automatically classified at runtime by AI — no hardcoding, works for any industry.")
-
-            real_competitors = scores.get("real_competitors", [])
-            dominant_platforms = scores.get("dominant_platforms", [])
-            government_bodies = scores.get("government_bodies", [])
-            total_q = scores["total_queries_run"]
-
-            # ── Competitor visibility (no tabs, clean table) ──────────────
-            user_competitors = bd.get("competitors", [])
-            detected_names_map = {b.lower(): c for b, c in real_competitors}
-            comp_rows = [{"Brand": f"🎯 {brand_name} (You)", "AI Mentions": scores["total_mentions"],
-                          "Visibility": f"{scores['overall_citation_share']}%", "Status": "Your Brand"}]
-            for comp in user_competitors:
-                mentions = detected_names_map.get(comp.lower(), 0)
-                pct = round((mentions / total_q) * 100) if total_q > 0 else 0
-                comp_rows.append({"Brand": comp, "AI Mentions": mentions,
-                                  "Visibility": f"{pct}%",
-                                  "Status": "✅ Detected" if mentions > 0 else "⚪ Not mentioned"})
-            for brand_c, count in real_competitors[:8]:
-                if brand_c.lower() not in [c.lower() for c in user_competitors] and brand_c.lower() != brand_name.lower():
-                    pct = round((count / total_q) * 100) if total_q > 0 else 0
-                    comp_rows.append({"Brand": brand_c, "AI Mentions": count,
-                                      "Visibility": f"{pct}%", "Status": "Also detected"})
-            st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
-
             # ── Brand mention context ────────────────────────────────────
             st.subheader("How Your Brand Was Mentioned")
             ctx = scores["context_breakdown"]
@@ -2303,10 +2318,10 @@ elif st.session_state.step == 4:
                     label_visibility="collapsed"
                 )
                 if st.button("🚀 Re-run with this country", use_container_width=True):
-                    # Update country in brand_data and clear cached website text
+                    # Update country in brand_data and clear all downstream cache
                     # so topics/prompts regenerate with new country context
                     st.session_state.brand_data["country"] = new_country
-                    # Clear cached prompts so they regenerate with new country
+                    # Clear cached prompts and topic intents so they regenerate
                     st.session_state.prompts_by_topic = {}
                     st.session_state.selected_prompts = {}
                     st.session_state.topics = []
@@ -2314,41 +2329,7 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    st.rerun(        + "PROMPT 2 — must start with WHO or WHICH (best is banned):\n"
-        + "MUST begin with Who or Which. No exceptions. Never use the word best.\n"
-        + "No persona. No first person.\n"
-        + "CORRECT: Who provides reliable " + category_word + " for [topic use case]?\n"
-        + "CORRECT: Which " + category_word + "s handle [topic] well?\n"
-        + "WRONG: Whats the best — banned. WRONG: best — banned.\n\n"
-
-        + "PROMPT 3 — must start with " + _p3_opener + " (best is banned):\n"
-        + "MUST begin with exactly: " + _p3_opener + ". No other opener.\n"
-        + "No persona. Neutral. Never use the word best.\n"
-        + "CORRECT: " + _p3_opener + " [specific question about topic]?\n"
-        + "WRONG: best — banned in prompt 3.\n\n"
-
-        + "PROMPT 4 — must start with I or we (best banned at start):\n"
-        + "MUST begin with I or we. No other opener.\n"
-        + "Persona: " + personas[0] + " singular. Never pluralise.\n"
-        + "Short casual. How this buyer actually types.\n"
-        + "Reference a differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
-        + "CORRECT: Im a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
-        + "CORRECT: we need [topic] with [differentiator], any recommendations?\n"
-        + "WRONG: starts with best or Whats the best.\n\n"
-
-        + "PROMPT 5 — must start with How does " + brand_name + " or " + brand_name + " vs:\n"
-        + "MUST begin with How does " + brand_name + " or " + brand_name + " vs.\n"
-        + "Only prompt allowed to name " + brand_name + " directly.\n"
-        + "Compare against " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + ".\n"
-        + "CORRECT: How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic]?\n\n"
-
-        + "MANDATORY STARTERS — enforced strictly:\n"
-        + "Prompt 1: bare topic\n"
-        + "Prompt 2: Who OR Which\n"
-        + "Prompt 3: " + _p3_opener + "\n"
-        + "Prompt 4: I OR we\n"
-        + "Prompt 5: How does " + brand_name + " OR " + brand_name + " vs\n"
-        + "The word BEST is completely banned from prompts 2, 3, and 4.\n"
-        + "No two prompts may start with the same word.\n"
-        + "Return ONLY the JSON array."
-    )
+                    # Clear _topic_intents so stale country-specific intents don't persist
+                    if "brand_data" in st.session_state:
+                        st.session_state.brand_data.pop("_topic_intents", None)
+                    st.rerun()
