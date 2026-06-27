@@ -601,6 +601,23 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     customers_list = brand_data.get("customers", [])
     persona_role = customers_list[sum(ord(c) for c in topic) % len(customers_list)] if customers_list else "professional"
 
+    # Rotate recommendation ask phrasing per topic — natural tone variations
+    # Uses topic hash so each topic gets a consistent but different ending
+    _REC_ASKS = [
+        "Who do you recommend?",
+        "What would you suggest?",
+        "Which one should I go with?",
+        "Any recommendations?",
+        "Who should I hire?",
+        "What's your pick?",
+        "Which agency would you choose?",
+        "Can you point me in the right direction?",
+        "What would you go with?",
+        "Who would you trust for this?",
+    ]
+    _topic_hash = sum(ord(c) for c in topic)
+    rec_ask = _REC_ASKS[_topic_hash % len(_REC_ASKS)]
+
     # Country as system context not in prompt text
     country_system = ""
     country_suffix = ""
@@ -640,7 +657,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "2. NATURAL QUESTION: Casual question about this topic. Like asking a friend.\n"
         + comparison_line + "\n"
         "4. PERSONA: I am a " + persona_role + " at a [company type]. "
-        "I need [specific need from this topic]. Who do you recommend?\n"
+        "I need [specific need from this topic]. " + rec_ask + "\n"
         "5. COLLOQUIAL: Ultra short 2-5 words, informal like a quick text. Must end with ?\n\n"
         "RULES:\n"
         "- NEVER mention \"" + brand_name + "\"\n"
