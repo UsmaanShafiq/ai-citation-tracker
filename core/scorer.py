@@ -107,26 +107,11 @@ def calculate_citation_share(results: list, target_brand: str) -> dict:
         [(b, c) for b, c, _ in government_bodies]
     )
 
-    # ─── Position score ───────────────────────────────────────────────────────
-    position_scores = []
-    position_points = {1: 5, 2: 4, 3: 3, 4: 2, 5: 1}
-
-    for r in results:
-        pos = r["brands_detected"]["target_position"]
-        if pos > 0:
-            points = position_points.get(pos, 1)
-        else:
-            points = 0
-        position_scores.append(points)
-
-    avg_position_score = round(
-        sum(position_scores) / len(position_scores), 2
-    ) if position_scores else 0
-
-    max_possible = 5 * len(results)
-    position_score_pct = round(
-        (sum(position_scores) / max_possible) * 100
-    ) if max_possible > 0 else 0
+    # ─── Position tracking removed ───────────────────────────────────────────
+    # LLM position detection was unreliable (often returned 0 even when brand
+    # appeared at position 4 or 7). Removed to avoid misleading data.
+    avg_position_score = 0
+    position_score_pct = 0
 
     # ─── Context breakdown ────────────────────────────────────────────────────
     context_counts = defaultdict(int)
@@ -172,7 +157,7 @@ def format_report(score_data: dict) -> str:
 
     lines.append(f"\nOVERALL CITATION SHARE: {score_data['overall_citation_share']}%")
     lines.append(f"Total mentions: {score_data['total_mentions']} / {score_data['total_queries_run']} queries")
-    lines.append(f"Position score: {score_data['position_score_pct']}%")
+
 
     lines.append("\nCITATION SHARE BY TOOL:")
     for tool, data in score_data["citation_share_by_tool"].items():
@@ -206,7 +191,6 @@ if __name__ == "__main__":
             "brands_detected": {
                 "all_brands": ["ServiceTitan", "Jobber", "Housecall Pro"],
                 "target_mentioned": True,
-                "target_position": 1,
                 "target_context": "recommended"
             }
         },
@@ -217,7 +201,6 @@ if __name__ == "__main__":
             "brands_detected": {
                 "all_brands": ["Jobber", "Housecall Pro", "Workiz"],
                 "target_mentioned": False,
-                "target_position": 0,
                 "target_context": "not_mentioned"
             }
         },
@@ -228,7 +211,6 @@ if __name__ == "__main__":
             "brands_detected": {
                 "all_brands": ["ServiceTitan", "Workiz"],
                 "target_mentioned": True,
-                "target_position": 1,
                 "target_context": "recommended"
             }
         },
@@ -239,7 +221,6 @@ if __name__ == "__main__":
             "brands_detected": {
                 "all_brands": ["Jobber", "ServiceTitan", "Housecall Pro"],
                 "target_mentioned": True,
-                "target_position": 2,
                 "target_context": "recommended"
             }
         },
@@ -250,7 +231,6 @@ if __name__ == "__main__":
             "brands_detected": {
                 "all_brands": ["ServiceTitan", "FieldEdge"],
                 "target_mentioned": True,
-                "target_position": 1,
                 "target_context": "recommended"
             }
         },
