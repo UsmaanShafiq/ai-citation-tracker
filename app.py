@@ -1633,6 +1633,28 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
 
 st.set_page_config(page_title="AI Citation Tracker", page_icon="📡", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    /* Ensure full AI responses wrap instead of clipping horizontally */
+    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p,
+    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] li,
+    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] td,
+    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] th {
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+    }
+    .ai-response-full {
+        white-space: pre-wrap !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("📡 AI Citation Tracker")
 st.caption("Track how often your brand appears in AI-generated recommendations")
 st.divider()
@@ -2258,10 +2280,12 @@ elif st.session_state.step == 4:
                     response_text = raw_response.get("text", "") or ""
                     web_sources = raw_response.get("sources", [])
                     web_searched = raw_response.get("web_searched", False)
+                    model_used = raw_response.get("model_used", "")
                 else:
                     response_text = str(raw_response) if raw_response else ""
                     web_sources = []
                     web_searched = False
+                    model_used = ""
 
                 # Auto-retry once on empty response
                 if not response_text.strip() or len(response_text.strip()) < 30:
@@ -2273,6 +2297,7 @@ elif st.session_state.step == 4:
                         response_text = retry_raw.get("text", "") or ""
                         web_sources = retry_raw.get("sources", [])
                         web_searched = retry_raw.get("web_searched", False)
+                        model_used = retry_raw.get("model_used", model_used)
                     elif retry_raw:
                         response_text = str(retry_raw)
 
@@ -2312,6 +2337,7 @@ elif st.session_state.step == 4:
                     "brands_detected": brand_data_detected,
                     "linked_sites": linked_sites,
                     "web_searched": web_searched,
+                    "model_used": model_used,
                 })
 
                 # Update live feed
@@ -2577,6 +2603,8 @@ elif st.session_state.step == 4:
                                     st.markdown(f"🌐 **Web searched** · 📎 **{src_count} source{'s' if src_count != 1 else ''} used**")
                                 elif web_searched_r:
                                     st.markdown("🌐 **Web searched**")
+                                if r.get("model_used"):
+                                    st.caption(f"Model: `{r['model_used']}`")
 
                                 # AI Response expander
                                 response = r.get("response", "")
