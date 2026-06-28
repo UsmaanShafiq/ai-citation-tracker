@@ -171,7 +171,7 @@ def _parse_json_list(text: str) -> list:
 # =============================================================================
 import re as _vre
 
-# Priority 5: Abbreviation normalisation — long forms nobody types into ChatGPT
+# Priority 5: Abbreviation normalisation — long forms nobody types into AI tools
 _EXPAND_TO_SHORT = {
     "Search Engine Optimization": "SEO",
     "Business to Business": "B2B",
@@ -520,7 +520,7 @@ def generate_gap_analysis(brand_data: dict, all_results: list, scores: dict) -> 
     products = ", ".join(brand_data.get("products", []))
     key_features = ", ".join(brand_data.get("key_features", []))
 
-    # Extract what ChatGPT actually said about competitors
+    # Extract what AI tools actually said about competitors
     competitor_mentions = {}
     source_domains = set()
     response_snippets = []
@@ -707,7 +707,7 @@ def ai_generate_topics(brand_data: dict) -> list:
         + '{\n'
         + '  "what_business_does": "One specific sentence. Use the brand own terminology from website.",\n'
         + '  "exact_buyer": "Job title, company type, and problem they need solved.",\n'
-        + '  "buyer_searches": ["5 exact phrases buyer types into ChatGPT. Use brand product names. Start with best/top/which/who/compare."],\n'
+        + '  "buyer_searches": ["5 exact phrases buyer types into AI tools. Use brand product names. Start with best/top/which/who/compare."],\n'
         + '  "business_category": "Single word: agency OR software OR platform OR firm OR provider OR training company"\n'
         + '}\n\n'
         + "CRITICAL: Use actual product and vendor names from the website.\n"
@@ -1099,12 +1099,15 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     # ── Slot 3 examples by industry ───────────────────────────────────────────
     # Alternates between criteria-selection and how-to across topics
-    _topic_hash_s3 = sum(ord(c) for c in topic) % 2  # 0 = criteria, 1 = how-to
+    # Slot 3 rotates through 5 distinct intent types — one per topic in a set of 5
+    # Hash ensures each topic gets a different type with no repeats across 5 topics
+    _topic_hash_s3 = sum(ord(c) for c in topic) % 5
+    # Type 0: Criteria-selection
     _slot3_criteria = {
-        "saas":          f"What should I look for when choosing a {topic} tool for my startup?",
-        "agency":        f"What should I look for when hiring a {topic} agency?",
+        "saas":          f"What should I look for when choosing a tool for {topic}?",
+        "agency":        f"What factors matter when selecting a {topic} agency?",
         "training":      f"What should I consider when choosing a {topic} training provider?",
-        "it_training":   f"What certifications should a {topic} vendor have?",
+        "it_training":   f"What certifications should a {topic} training vendor have?",
         "content_agency":f"What should I look for when hiring a {topic} content agency?",
         "ecommerce":     f"What should an online store owner look for in a {topic} platform?",
         "healthcare":    f"What should a hospital administrator look for in a {topic} solution?",
@@ -1114,99 +1117,173 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "hr":            f"What should an HR director look for in a {topic} platform?",
         "manufacturing": f"What should a plant manager consider when choosing a {topic} system?",
         "hospitality":   f"What should a hotel manager look for in a {topic} solution?",
-        "nonprofit":     f"What should a non-profit director look for in an affordable {topic} tool?",
+        "nonprofit":     f"What factors matter when selecting an affordable {topic} tool for NGOs?",
     }
+    # Type 1: How-to
     _slot3_howto = {
-        "saas":          f"How can a startup integrate {topic} into their workflow?",
+        "saas":          f"How can a startup get started with {topic} without a big budget?",
         "agency":        f"How can a Series A company build a {topic} strategy from scratch?",
         "training":      f"How do IT teams get started with {topic} certification?",
-        "it_training":   f"How can a network team prepare for {topic} certification?",
+        "it_training":   f"How can a network team prepare for {topic} without expensive training?",
         "content_agency":f"How can a lean marketing team implement {topic} effectively?",
         "ecommerce":     f"How can an online store use {topic} to increase conversions?",
-        "healthcare":    f"How can a hospital implement {topic} while maintaining compliance?",
+        "healthcare":    f"How can a clinic implement {topic} while maintaining compliance?",
         "legal":         f"How can a law firm implement {topic} without disrupting workflows?",
-        "legal_tech":    f"How do inventors use {topic} before filing a patent?",
+        "legal_tech":    f"How do inventors use {topic} before filing a patent application?",
         "finance":       f"How can a finance team use {topic} to improve reporting accuracy?",
         "hr":            f"How do HR teams use {topic} to reduce time-to-hire?",
         "manufacturing": f"How can a factory implement {topic} to reduce downtime?",
-        "hospitality":   f"How can a hotel chain implement {topic} to improve guest experience?",
-        "nonprofit":     f"How can an NGO use {topic} on a limited budget?",
+        "hospitality":   f"How can a hotel chain use {topic} to improve guest experience?",
+        "nonprofit":     f"How can an NGO use {topic} effectively on a limited budget?",
     }
-    _s3_example = (
-        _slot3_criteria.get(_industry, _slot3_criteria["saas"])
-        if _topic_hash_s3 == 0
-        else _slot3_howto.get(_industry, _slot3_howto["saas"])
-    )
-    _s3_type = "criteria-selection question" if _topic_hash_s3 == 0 else "how-to question"
+    # Type 2: Features question
+    _slot3_features = {
+        "saas":          f"What features are most important in a good {topic} tool?",
+        "agency":        f"What capabilities should a {topic} agency have for B2B clients?",
+        "training":      f"What should a good {topic} certification program include?",
+        "it_training":   f"What does a quality {topic} training program need to include?",
+        "content_agency":f"What capabilities should a {topic} content agency have?",
+        "ecommerce":     f"What features should a {topic} platform have for high-volume stores?",
+        "healthcare":    f"What capabilities should a {topic} solution have for clinical use?",
+        "legal":         f"What features matter most in a {topic} platform for litigation support?",
+        "legal_tech":    f"What should a good {topic} tool include for patent professionals?",
+        "finance":       f"What security features matter most in a {topic} tool for banking?",
+        "hr":            f"What compliance features matter most in a {topic} platform for HR teams?",
+        "manufacturing": f"What certifications should a {topic} vendor have for industrial use?",
+        "hospitality":   f"What integrations should a {topic} solution have for hotel chains?",
+        "nonprofit":     f"What features matter most in a {topic} tool for resource-constrained NGOs?",
+    }
+    # Type 3: Comparison of approaches
+    _slot3_approach = {
+        "saas":          f"How does AI-powered {topic} compare to traditional methods for small teams?",
+        "agency":        f"How does outsourcing {topic} compare to building an in-house team?",
+        "training":      f"How do hands-on lab courses compare to self-paced online training for {topic}?",
+        "it_training":   f"How do vendor-authorised {topic} courses compare to third-party training?",
+        "content_agency":f"How does outsourcing {topic} compare to hiring in-house writers?",
+        "ecommerce":     f"How does managed {topic} compare to a DIY approach for online retailers?",
+        "healthcare":    f"How does cloud-based {topic} compare to on-premise systems for clinics?",
+        "legal":         f"How does AI-assisted {topic} compare to manual processes for law firms?",
+        "legal_tech":    f"How does AI-powered {topic} compare to traditional keyword search for inventors?",
+        "finance":       f"How does automated {topic} compare to manual processes for finance teams?",
+        "hr":            f"How does AI-driven {topic} compare to traditional methods for talent teams?",
+        "manufacturing": f"How does automated {topic} compare to manual processes for factory floors?",
+        "hospitality":   f"How does cloud-based {topic} compare to legacy systems for hotel chains?",
+        "nonprofit":     f"How do free {topic} tools compare to paid options for NGOs?",
+    }
+    # Type 4: Common mistakes
+    _slot3_mistakes = {
+        "saas":          f"What mistakes do startups make when choosing a {topic} solution?",
+        "agency":        f"What should companies avoid when hiring a {topic} agency?",
+        "training":      f"What mistakes do IT teams make when choosing a {topic} certification program?",
+        "it_training":   f"What mistakes do network engineers make when selecting {topic} training?",
+        "content_agency":f"What mistakes do SaaS companies make when choosing a {topic} agency?",
+        "ecommerce":     f"What should online store owners avoid when implementing {topic}?",
+        "healthcare":    f"What pitfalls should hospitals avoid when adopting {topic} solutions?",
+        "legal":         f"What mistakes do law firms make when implementing {topic} platforms?",
+        "legal_tech":    f"What mistakes do startup founders make when doing {topic} before filing?",
+        "finance":       f"What mistakes do finance teams make when selecting {topic} tools?",
+        "hr":            f"What should talent teams avoid when choosing a {topic} platform?",
+        "manufacturing": f"What mistakes do plant managers make when rolling out {topic} systems?",
+        "hospitality":   f"What should hotel managers avoid when implementing {topic}?",
+        "nonprofit":     f"What mistakes do NGOs make when choosing {topic} tools on a limited budget?",
+    }
+    _s3_maps = [_slot3_criteria, _slot3_howto, _slot3_features, _slot3_approach, _slot3_mistakes]
+    _s3_types = [
+        "criteria-selection question",
+        "how-to question",
+        "features question",
+        "comparison of approaches",
+        "common mistakes question",
+    ]
+    _s3_example = _s3_maps[_topic_hash_s3].get(_industry, list(_s3_maps[_topic_hash_s3].values())[0])
+    _s3_type    = _s3_types[_topic_hash_s3]
 
-    prompt = (
-        "You are an expert GEO (Generative Engine Optimization) strategist who deeply understands\n"
-        "how real buyers search in AI tools like ChatGPT, Perplexity, and Gemini\n"
+    # ── Fix: System role holds ALL rules. User message holds ONLY task data ──────
+    # Prevents grammar and slot rules from being diluted under generation pressure.
+
+    _system_role = (
+        "You are an expert GEO (Generative Engine Optimization) strategist who deeply understands "
+        "how real buyers search in AI tools like Perplexity, Gemini, Claude, and ChatGPT "
         "across every industry and niche globally.\n\n"
-        "You study the brand context carefully and generate prompts that sound exactly\n"
-        "like how a real person in that specific industry would type into ChatGPT.\n"
-        "Every prompt must feel native to that brand's world, not generic.\n\n"
-        + term_glossary
-        + "BRAND CONTEXT:\n"
-        + "Industry detected: " + _industry.replace("_", " ").title() + "\n"
-        + "Business type: " + business_type + "\n"
-        + "Solution type: " + cat_word + "\n"
+
+        "You generate search prompts that sound exactly like how a real person in a specific "
+        "industry would type into an AI tool. Every prompt must feel native to that brand's world.\n\n"
+
+        "GRAMMAR RULES — apply before writing any prompt:\n"
+        "1. NEVER write 'a inventor' — write 'an inventor'. Check every vowel-starting role name.\n"
+        "2. NEVER write 'a engineer' — write 'an engineer'.\n"
+        "3. NEVER write 'a researcher' — always singular: 'I am a researcher' not 'I am a researchers'.\n"
+        "4. NEVER write 'softwares' — software is uncountable. Always 'software' never 'softwares'.\n"
+        "5. NEVER write 'a software' — drop the article: 'I need software that' not 'I need a software that'.\n"
+        "6. Subject-verb agreement: 'Which tools offer' not 'Which tools offers'. "
+        "'Which agencies provide' not 'Which agencies provides'.\n\n"
+
+        "SLOT RULES — follow the pre-assigned slot type for each prompt exactly:\n"
+        "Slot 1: Plain keyword — copy topic exactly, nothing added.\n"
+        "Slot 2: Discovery/best-of — third person only, use the business-type opener provided, never 'I' or 'we'.\n"
+        "Slot 3: Use the PRE-ASSIGNED INTENT TYPE provided — do not choose freely.\n"
+        "Slot 4: Persona — first person only, one persona from ICP list, one differentiator, natural casual tone.\n"
+        "Slot 5: Comparison — always 'How does [Brand] compare to [Competitor] for [topic]?'\n\n"
+
+        "VOCABULARY RULES:\n"
+        "- SaaS/Software brands: use 'tools', 'platforms', 'solutions' in slots 2-3. Never 'agencies'.\n"
+        "- Agency/Service brands: use 'agencies', 'firms', 'companies' in slots 2-3. Never 'software'.\n"
+        "- Training brands: use 'training providers', 'course providers' in slots 2-3. Never 'software'.\n\n"
+
+        "NATURAL LANGUAGE RULE — critical:\n"
+        "Do NOT copy the topic name verbatim into every prompt. "
+        "Express the same concept using natural language the way a real person would say it.\n"
+        "If the topic is 'free patent search tool' a prompt can say "
+        "'a tool that searches patents without any cost' or "
+        "'something to help me find prior art for free' "
+        "rather than repeating 'free patent search tool' in every sentence.\n"
+        "The meaning must stay the same but the phrasing must sound human.\n\n"
+
+        "DUPLICATE RULE: No two prompts in the same set may start with the same word or share the same intent.\n"
+        "BRAND RULE: Never mention the brand name in slots 1-4. Only slot 5 uses the brand name.\n"
+        "YEAR RULE: Never use year numbers.\n"
+        "COUNTRY RULE: Never use country names in prompt text.\n\n"
+
+        "OUTPUT: Return ONLY a JSON array of exactly 5 strings. No markdown. No explanation.\n"
+        "Example: [\"prompt1\", \"prompt2\", \"prompt3\", \"prompt4\", \"prompt5\"]"
+    )
+
+    _user_message = (
+        "Generate exactly 5 prompts for this topic.\n\n"
+        "TOPIC: \"" + topic + "\"\n\n"
+        "BRAND CONTEXT SUMMARY:\n"
+        "Industry: " + _industry.replace("_", " ").title() + "\n"
+        "Business type: " + business_type + "\n"
+        "Solution type: " + cat_word + "\n"
         + cat_ban
-        + "Context: " + context_block + "\n"
+        + "Key context: " + context_block[:600] + "\n"
         + competitor_context
         + country_system + "\n\n"
-        + "GENERATE EXACTLY 5 PROMPTS for TOPIC: \"" + topic + "\"\n\n"
-        + "PROMPT 1 — PLAIN KEYWORD:\n"
-        + "Copy the topic phrase exactly: '" + topic + "'\n\n"
-        + "PROMPT 2 — DISCOVERY / BEST-OF (third person, no first person):\n"
-        + "Must start with: '" + p2_opener + "' (mandatory for this business type)\n"
-        + cat_ban
-        + "Industry-appropriate examples:\n"
-        + "  '" + _s2_ex[0] + "'\n"
-        + "  '" + _s2_ex[1] + "'\n"
-        + "WRONG: 'Which software offer...' (uncountable noun). WRONG: starts with I/we.\n\n"
-        + "PROMPT 3 — " + _s3_type.upper() + " (third person, different from prompt 2):\n"
-        + "Must NOT start with the same word as prompt 2.\n"
-        + "Must be a " + _s3_type + " — different intent from prompt 2.\n"
-        + "Industry-appropriate example:\n"
-        + "  '" + _s3_example + "'\n"
-        + "WRONG: same opening word as prompt 2. WRONG: first person.\n\n"
-        + "PROMPT 4 — PERSONA WITH DIFFERENTIATOR (first person, casual, natural):\n"
-        + "Must start with 'I' or 'we'. The ONLY first-person prompt.\n"
-        + "Persona: " + persona_role + " — singular. Never pluralise.\n"
-        + "Tone must match the industry: a " + _industry.replace("_"," ") + " buyer sounds different from others.\n"
-        + "References one differentiator from the key features.\n"
-        + "GRAMMAR: 'I am a " + persona_role + "' NEVER 'I am a " + persona_role + "s'\n"
-        + "Ends with: 'What do you recommend?' OR 'Any suggestions?' OR 'Which would you go with?'\n"
-        + "CORRECT: 'I am a " + persona_role + " and I need [differentiator] for [topic]. What do you recommend?'\n"
-        + "BAD: 'I am a professional and I need X' (too generic)\n"
-        + "BAD: 'I need a seamless experience' (marketing language not natural speech)\n\n"
-        + "PROMPT 5 — COMPARISON (mandatory, always present):\n"
-        + "Format: 'How does " + brand_name + " compare to [competitor] for [topic]?'\n"
-        + "Brand name '" + brand_name + "' required — exact capitalisation from user input.\n"
-        + "Competitor from Direct Competitors field only: " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + "\n"
-        + "NEVER omit. NEVER use a competitor not from the input field.\n\n"
-        + "ABSOLUTE RULES:\n"
-        + "1. Prompts 1-4: NEVER mention '" + brand_name + "'\n"
-        + "2. Prompt 5 ALWAYS names '" + brand_name + "' and the competitor\n"
-        + "3. No two prompts start with the same word\n"
-        + "4. Prompts 2 and 3 are THIRD PERSON only\n"
-        + "5. Prompt 4 is the ONLY first-person prompt\n"
-        + "6. Every prompt contains a word from: '" + topic + "'\n"
-        + "7. No year numbers. No country names in prompt text.\n"
-        + "8. Singular grammar always.\n"
-        + "9. Golden standard: would a real " + _industry.replace("_"," ") + " buyer actually type this into ChatGPT?\n"
-        + "   If it sounds like a template, regenerate. If it sounds like a real human, it passes.\n"
-        + "\nReturn ONLY a JSON array of exactly 5 strings. No markdown."
+        "PRE-ASSIGNED SLOT TYPES FOR THIS GENERATION:\n"
+        "Slot 1: Plain keyword — output exactly: " + topic + "\n"
+        "Slot 2: Discovery using opener: '" + p2_opener + "' (third person only)\n"
+        "  Industry examples: '" + _s2_ex[0] + "' OR '" + _s2_ex[1] + "'\n"
+        "Slot 3: " + _s3_type.upper() + " (this is the pre-assigned type — do not substitute)\n"
+        "  Example for this type: '" + _s3_example + "'\n"
+        "Slot 4: Persona prompt (first person only)\n"
+        "  Persona: " + persona_role + " (singular, from ICP list only)\n"
+        "  Must reference a differentiator. End with 'What do you recommend?' or 'Any suggestions?'\n"
+        "Slot 5: Comparison — format exactly:\n"
+        "  'How does " + brand_name + " compare to "
+        + (comp_for_comparison[0] if comp_for_comparison else "a named competitor")
+        + " for [topic]?'\n\n"
+        "Return ONLY a JSON array of 5 strings."
     )
+
+    prompt = _user_message  # kept for backward compat with process_raw and retry logic
     import re as _re
     year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
     brand_lower = brand_name.lower()
     topic_lower = topic.lower().strip()
 
     # Universal structural validator - works for any niche, any industry
-    # A prompt is GOOD if it will force ChatGPT to name specific brands
-    # A prompt is BAD if ChatGPT will respond with generic advice, tools, or nothing
+    # A prompt is GOOD if it will force AI tools to name specific brands
+    # A prompt is BAD if AI tools will respond with generic advice, tools, or nothing
 
     # Trigger words that force brand/agency citations in any niche
     CITATION_TRIGGERS = [
@@ -1229,7 +1306,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
 
     def is_citation_producing(p):
         """
-        Returns True if this prompt will force ChatGPT to name specific brands.
+        Returns True if this prompt will force AI tools to name specific brands.
         Universal logic - works for any industry, any niche.
         """
         pl = p.lower().strip()
@@ -1292,10 +1369,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         return cleaned
 
     # First attempt — uses system/user split + temperature 0.8
-    raw = _call_ai_for_prompts(
-        "You are an expert GEO strategist generating search prompts. Follow all rules exactly.",
-        prompt
-    )
+    raw = _call_ai_for_prompts(_system_role, _user_message)
     prompts = _parse_json_list(raw)
     result = [topic] + process_raw(prompts)
 
@@ -2543,7 +2617,7 @@ elif st.session_state.step == 4:
                                 else:
                                     st.warning("Brand not mentioned")
 
-                                # Web sources — shown like ChatGPT citations
+                                # Web sources — shown like AI tool citations
                                 linked = r.get("linked_sites", [])
                                 web_searched_r = r.get("web_searched", False)
                                 src_count = len(linked)
