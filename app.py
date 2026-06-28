@@ -1452,25 +1452,46 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
     result = result[:5]
     result[0] = topic  # Always exact topic name — no grammar functions ever touch slot 1
 
-    # Slot 5: comparison only for topic groups 1 and 3 (index 0 and 2)
-    # Other topics use rotating slot 5 types — avoids formulaic comparison in every topic
+    # Slot 4 and Slot 5 — "Can" variants rotate across topic groups
+    # Spec:
+    #   index 0 → slot 5 = comparison (no Can needed)
+    #   index 1 → slot 5 = "Can you give examples of..." (replaces outcome-focused)
+    #   index 2 → slot 5 = comparison, slot 4 gets "Can you recommend..." instead of discovery repeat
+    #   index 3 → slot 5 = "Can you give examples..." (already Can format — keep as is)
+    #   index 4 → slot 5 = "Can [topic] help [persona] achieve [outcome]?"
+
+    # Build the four Can variants for this topic
+    _can_compare  = "Can you compare different " + prompt_word + "s that specialise in " + topic + "?"
+    _can_recommend = "Can you recommend any " + prompt_word + "s that are known for " + topic + "?"
+    _can_examples  = "Can you give examples of " + persona_role + "s that have successfully used " + topic + "?"
+    _can_outcome   = "Can " + topic + " help " + persona_role + "s achieve better results?"
+
+    # Apply fixes to all Can variants
+    def _fix_can(t):
+        return _fix_brand_cap(_normalise_abbr(t), brand_name)
+
+    _can_compare   = _fix_can(_can_compare)
+    _can_recommend = _fix_can(_can_recommend)
+    _can_examples  = _fix_can(_can_examples)
+    _can_outcome   = _fix_can(_can_outcome)
+
     if topic_index in [0, 2]:
+        # Slot 5 = comparison
         result[4] = _comparison
+        # Index 2: add "Can you recommend..." to slot 4 to avoid discovery repeat
+        if topic_index == 2 and len(result) >= 4:
+            result[3] = _can_recommend
     elif topic_index == 1:
-        _outcome = (
-            "How does " + topic + " help " + persona_role + "s achieve better results?"
-        )
-        result[4] = _fix_brand_cap(_normalise_abbr(_outcome), brand_name)
+        # Slot 5 = Can examples
+        result[4] = _can_examples
     elif topic_index == 3:
-        _examples = (
+        # Already a Can format — keep existing "Can you give examples of companies..." style
+        result[4] = _fix_can(
             "Can you give examples of companies that have used " + topic + " successfully?"
         )
-        result[4] = _fix_brand_cap(_normalise_abbr(_examples), brand_name)
     else:
-        _casual = (
-            "Where can I find a " + prompt_word + " that specialises in " + topic + "?"
-        )
-        result[4] = _fix_brand_cap(_normalise_abbr(_casual), brand_name)
+        # Index 4+ → slot 5 = "Can [topic] help [persona] achieve outcome?"
+        result[4] = _can_outcome
 
     # ── Grammar audit pass — runs on all 5 prompts before display ─────────────
     # Catches errors the model produced despite rules:
