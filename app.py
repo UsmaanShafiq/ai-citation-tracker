@@ -975,20 +975,36 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             "   CORRECT: 'Which " + solution_word + " would you recommend for [specific need from topic]?'"
         )
 
-    # ── Priority 4: Category word for business type ──────────────────────────
+    # ── Priority 4 & 6: Category word + countable prompt word ────────────────
+    # cat_word = the actual solution type (used in context and rules)
+    # prompt_word = always a COUNTABLE noun used in prompt 2/3 templates
+    # "Which tools" / "Which agencies" / "Which training providers" — no grammar errors
+    # "Which software" is BANNED — software is uncountable, causes "Which software offer"
     bt_lower_cw = business_type.lower()
     if any(w in bt_lower_cw for w in ["training", "education", "bootcamp"]):
-        cat_word = "training provider"
-        cat_ban  = "NEVER use software or agency — this is a training company\n"
+        cat_word    = "training provider"
+        prompt_word = "training provider"  # "Which training providers"
+        p2_opener   = "Which training providers"
+        p3_opener   = "Are there training providers"
+        cat_ban     = "NEVER use software or agency — this is a training company\n"
     elif any(w in bt_lower_cw for w in ["agency", "service", "studio"]):
-        cat_word = "agency"
-        cat_ban  = "NEVER use software or tool — this is a service not software\n"
+        cat_word    = "agency"
+        prompt_word = "agency"             # "Which agencies"
+        p2_opener   = "Which agencies"
+        p3_opener   = "Are there agencies"
+        cat_ban     = "NEVER use software or tool — this is a service not software\n"
     elif any(w in bt_lower_cw for w in ["saas", "software", "platform"]):
-        cat_word = "software"
-        cat_ban  = "NEVER use agency or firm — this is software not a service\n"
+        cat_word    = "software"
+        prompt_word = "tool"               # "Which tools" — never "Which software"
+        p2_opener   = "Which tools"
+        p3_opener   = "Are there tools"
+        cat_ban     = "NEVER use agency or firm — this is software not a service\n"
     else:
-        cat_word = "provider"
-        cat_ban  = ""
+        cat_word    = "provider"
+        prompt_word = "provider"
+        p2_opener   = "Which providers"
+        p3_opener   = "Are there providers"
+        cat_ban     = ""
 
     prompt = (
         "You are an expert GEO (Generative Engine Optimization) strategist who understands "
@@ -1005,36 +1021,42 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "PROMPT 1 — DIRECT SEARCH:\n"
         "The exact topic phrase as typed. Nothing added. No question mark.\n"
         "Output: '" + topic + "'\n\n"
-        "PROMPT 2 — WHO/WHICH QUESTION (third person, no 'best', no 'I'):\n"
-        "MUST start with 'Who' or 'Which'. Never 'best'. Never 'I' or 'we'.\n"
-        "Use category word: " + cat_word + ". " + cat_ban +
-        "CORRECT: 'Who provides reliable " + cat_word + "s for [topic use case]?'\n"
-        "CORRECT: 'Which " + cat_word + "s handle [topic]?'\n"
-        "WRONG: 'best...' or 'What\'s the best...' or 'Which agencies...' if " + cat_word + " is software\n\n"
-        "PROMPT 3 — HOW-TO (neutral, no persona, no 'I'):\n"
-        "MUST start with 'How do I' OR 'How does' OR 'What is the best way to' OR 'How can I'.\n"
-        "Process or use-case focused. Never 'best' at the start.\n"
-        "CORRECT: 'How do I find a " + cat_word + " for [topic]?'\n"
-        "CORRECT: 'What is the best way to [use case from topic]?'\n\n"
+        "PROMPT 2 — DISCOVERY (third person, no 'best', no 'I'):\n"
+        "MUST start with: '" + p2_opener + "'\n"
+        + cat_ban +
+        "CORRECT: '" + p2_opener + " offer [topic feature]?'\n"
+        "CORRECT: '" + p2_opener + " specialise in [topic]?'\n"
+        "WRONG: 'Which software offer...' (software is uncountable — use tools/platforms)\n"
+        "WRONG: 'best...' or any first-person opener\n\n"
+        "PROMPT 3 — CASUAL DISCOVERY (third person, different opener from prompt 2):\n"
+        "MUST start with: '" + p3_opener + "' OR 'Where can I find' OR 'Is there a' OR 'Who offers'\n"
+        "Different intent from prompt 2. Never the same opening word.\n"
+        + cat_ban +
+        "CORRECT: '" + p3_opener + " that handle [topic]?'\n"
+        "WRONG: same opening as prompt 2. WRONG: 'I' or 'we'.\n\n"
         "PROMPT 4 — PERSONA (first person, starts with I or we):\n"
         "MUST start with 'I' or 'we'. This is the ONLY first-person prompt.\n"
         "Persona: " + persona_role + " — singular. Never pluralise.\n"
-        "Short and casual. References a key differentiator.\n"
+        "Short and casual. References a key differentiator from the brand context.\n"
         "GRAMMAR: 'I am a " + persona_role + "' NEVER 'I am a " + persona_role + "s'\n"
-        "Ends with a recommendation ask.\n"
-        "CORRECT: 'I am a " + persona_role + " and I need [feature] for [topic]. What do you recommend?'\n\n"
-        + comparison_line + "\n\n"
+        "Ends with: 'What do you recommend?' OR 'Any suggestions?' OR 'Which would you go with?'\n"
+        "CORRECT: 'I am a " + persona_role + " and I need [differentiator] for [topic]. What do you recommend?'\n\n"
+        "PROMPT 5 — COMPARISON (mandatory, always present):\n"
+        "MUST be: 'How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "[competitor]") + " for [topic]?'\n"
+        "Brand name '" + brand_name + "' is REQUIRED in this prompt — exact capitalisation.\n"
+        "Competitor must be from the Direct Competitors field only: " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + "\n"
+        "NEVER omit this prompt. NEVER use a competitor not from the input field.\n\n"
         "ABSOLUTE RULES:\n"
         "1. Prompts 1-4: NEVER mention '" + brand_name + "'\n"
-        "2. Prompt 5 ONLY may name '" + brand_name + "'\n"
+        "2. Prompt 5 ALWAYS names '" + brand_name + "' and a competitor\n"
         "3. 'best' is BANNED from prompts 2, 3, and 4\n"
         "4. No two prompts start with the same word\n"
-        "5. Prompt 2 and 3 are THIRD PERSON — never 'I' or 'we'\n"
+        "5. Prompts 2 and 3 are THIRD PERSON — never 'I' or 'we'\n"
         "6. Prompt 4 is the ONLY first-person prompt\n"
         "7. Every prompt contains at least one word from: '" + topic + "'\n"
         "8. No year numbers. No country names in prompt text\n"
         "9. Singular grammar: 'I am a researcher' NEVER 'I am a researchers'\n"
-        "10. If any two prompts look similar — rewrite one from a completely different angle\n"
+        "10. If two prompts look similar — rewrite one from a completely different angle\n"
         "\nReturn ONLY a JSON array of exactly 5 strings. No markdown."
     )
     import re as _re
@@ -1166,7 +1188,46 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         except Exception:
             break
 
-    # Priority 1: Structural duplicate check — reject if any two share first 6 words
+    # P3: Ensure exactly 5 prompts — regenerate missing ones
+    attempts = 0
+    while len(result) < 5 and attempts < 2:
+        attempts += 1
+        try:
+            raw_pad = _call_ai_for_prompts(
+                "You are an expert GEO strategist. Generate missing prompts.",
+                prompt + "\n\nNEED MORE PROMPTS. Already have:\n" +
+                "\n".join(f"- {r}" for r in result) +
+                "\nGenerate only the missing prompts to reach a total of 5."
+            )
+            pad_clean = process_raw(_parse_json_list(raw_pad))
+            for p in pad_clean:
+                if len(result) >= 5:
+                    break
+                if p.lower() not in [r.lower() for r in result]:
+                    result.append(p)
+        except Exception:
+            break
+
+    # P2: Guarantee comparison prompt as prompt 5
+    # Always "How does [Brand] compare to [Competitor] for [topic]?"
+    _comp_name = comp_for_comparison[0] if comp_for_comparison else (
+        competitors[0] if competitors else "alternatives"
+    )
+    _comparison = "How does " + brand_name + " compare to " + _comp_name + " for " + topic + "?"
+    _comparison = _fix_brand_cap(_normalise_abbr(_comparison), brand_name)
+
+    # Check if any prompt already contains both brand name and a competitor
+    _has_comparison = any(
+        brand_name.lower() in p.lower() and _comp_name.lower() in p.lower()
+        for p in result
+    )
+    if not _has_comparison:
+        if len(result) < 5:
+            result.append(_comparison)
+        else:
+            result[4] = _comparison  # Always slot 5
+
+    # P1: Structural duplicate check — auto-regenerate if dupes found
     if _has_structural_dupes(result):
         try:
             raw_regen = _call_ai_for_prompts(
@@ -1179,19 +1240,39 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             regen_clean = process_raw(regen)
             if regen_clean and not _has_structural_dupes([topic] + regen_clean):
                 result = ([topic] + regen_clean)[:5]
+                # Re-inject comparison as prompt 5
+                result[4] = _comparison
         except Exception:
             pass
 
-    # Priority 2: Ensure how-to prompt exists
+    # P5: Ensure how-to prompt exists somewhere in prompts 2-4
     if not _has_howto(result):
-        howto = "How do I find a " + solution_word + " for " + topic + "?"
+        howto = "How do I find " + solution_word + " for " + topic + "?"
         howto = _fix_brand_cap(_normalise_abbr(howto), brand_name)
         if len(result) < 5:
             result.append(howto)
         else:
-            result[-1] = howto
+            result[2] = howto  # Slot 3 — leaves slots 4 and 5 intact
 
-    return result[:5]
+    # Final pad to guarantee exactly 5
+    _pad = [
+        "Which " + prompt_word + "s specialise in " + topic + "?",
+        "Are there " + prompt_word + "s that offer " + topic + "?",
+        "I need " + topic + " — any suggestions?",
+        "Where can I find " + topic + "?",
+        _comparison,
+    ]
+    _pad_i = 0
+    while len(result) < 5:
+        candidate = _fix_brand_cap(_normalise_abbr(_pad[_pad_i % len(_pad)]), brand_name)
+        if candidate not in result:
+            result.append(candidate)
+        _pad_i += 1
+
+    result = result[:5]
+    # Always ensure prompt 5 is the comparison
+    result[4] = _comparison
+    return result
 
 
 # Common English words falsely detected as brand names - filter these out
