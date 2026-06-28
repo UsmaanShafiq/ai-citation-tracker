@@ -2529,13 +2529,13 @@ elif st.session_state.step == 4:
 
                     # Per prompt per model table
                     prompt_texts = list(set(r["query"] for r in topic_results))
-                    for prompt_text in prompt_texts:
+                    for p_idx, prompt_text in enumerate(prompt_texts):
                         prompt_results = [r for r in topic_results if r["query"] == prompt_text]
 
                         # Build badge row
                         badge_cols = st.columns([3] + [1] * len(models_in_topic))
                         with badge_cols[0]:
-                            st.caption(f"+ {prompt_text[:80]}{'...' if len(prompt_text) > 80 else ''}")
+                            st.markdown(prompt_text)
                         for col, model in zip(badge_cols[1:], models_in_topic):
                             model_result = next((r for r in prompt_results if r["tool"] == model), None)
                             if model_result and model_result["brands_detected"]["target_mentioned"]:
@@ -2546,7 +2546,8 @@ elif st.session_state.step == 4:
                                 col.caption("—")
 
                         # Drill-down expander for each prompt
-                        with st.expander(f"View details: {prompt_text[:60]}..."):
+                        with st.expander("View details", expanded=False, key=f"details_{topic}_{p_idx}"):
+                            st.markdown(f"**Prompt:** {prompt_text}")
                             for r in prompt_results:
                                 st.markdown(f"**{r['tool']}**")
                                 mentioned = r["brands_detected"]["target_mentioned"]
