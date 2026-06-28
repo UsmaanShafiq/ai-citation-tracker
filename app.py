@@ -1006,58 +1006,196 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         p3_opener   = "Are there providers"
         cat_ban     = ""
 
+
+    # ── Industry detection from products + customers ──────────────────────────
+    # Identifies niche so slot examples match how real buyers in that space talk
+    _all_input = (
+        " ".join(products_list) + " " +
+        " ".join(customers_list) + " " +
+        business_type
+    ).lower()
+
+    def _detect_industry():
+        if any(w in _all_input for w in ["patent", "prior art", "intellectual property", "ip filing", "invention"]):
+            return "legal_tech"
+        if any(w in _all_input for w in ["hipaa", "ehr", "patient", "clinic", "hospital", "medical", "healthcare"]):
+            return "healthcare"
+        if any(w in _all_input for w in ["fintech", "cfo", "accounting", "banking", "payroll", "finance", "compliance"]):
+            return "finance"
+        if any(w in _all_input for w in ["attorney", "law firm", "litigation", "legal", "contract", "paralegal"]):
+            return "legal"
+        if any(w in _all_input for w in ["ecommerce", "e-commerce", "shopify", "dtc", "retail", "dropshipping"]):
+            return "ecommerce"
+        if any(w in _all_input for w in ["hotel", "restaurant", "hospitality", "travel", "guest", "reservation"]):
+            return "hospitality"
+        if any(w in _all_input for w in ["hr", "recruitment", "talent", "hiring", "applicant", "workforce"]):
+            return "hr"
+        if any(w in _all_input for w in ["manufacturing", "factory", "supply chain", "plant", "industrial"]):
+            return "manufacturing"
+        if any(w in _all_input for w in ["non-profit", "nonprofit", "ngo", "charity", "foundation"]):
+            return "nonprofit"
+        if any(w in _all_input for w in ["juniper", "fortinet", "palo alto", "cisco", "networking", "certification", "nse", "jncia"]):
+            return "it_training"
+        if any(w in _all_input for w in ["content marketing", "seo content", "blog", "thought leadership", "ghostwriting"]):
+            return "content_agency"
+        if any(w in _all_input for w in ["saas", "software", "platform", "api", "developer", "startup"]):
+            return "saas"
+        if any(w in _all_input for w in ["agency", "service", "consulting", "studio"]):
+            return "agency"
+        if any(w in _all_input for w in ["training", "course", "education", "bootcamp", "certification"]):
+            return "training"
+        return "saas"  # default
+
+    _industry = _detect_industry()
+
+    # ── Slot 2 examples by industry ───────────────────────────────────────────
+    _slot2_examples = {
+        "saas":          [f"What are the best tools for {topic}?",
+                          f"Which platforms offer {topic} for small teams?",
+                          f"What are some good {topic} solutions for startups?"],
+        "agency":        [f"Which agencies specialise in {topic}?",
+                          f"What are some good {topic} companies?",
+                          f"Which firms are known for {topic}?"],
+        "training":      [f"Which training providers offer {topic}?",
+                          f"What are the best {topic} courses?",
+                          f"Which certification programs cover {topic}?"],
+        "it_training":   [f"Which authorised training providers offer {topic}?",
+                          f"What are the best {topic} certification courses?",
+                          f"Which companies provide vendor-authorised {topic} training?"],
+        "content_agency":[f"Which content agencies specialise in {topic}?",
+                          f"What are some good {topic} agencies for B2B brands?",
+                          f"Which firms are known for {topic} in the SaaS space?"],
+        "ecommerce":     [f"Which platforms offer the best {topic} for online stores?",
+                          f"What are some good {topic} solutions for e-commerce?",
+                          f"Which tools help online retailers with {topic}?"],
+        "healthcare":    [f"Which solutions offer {topic} for healthcare providers?",
+                          f"What are the best {topic} platforms for medical practices?",
+                          f"Which companies specialise in {topic} for clinical settings?"],
+        "legal":         [f"Which platforms provide {topic} for law firms?",
+                          f"What are some good {topic} tools for legal professionals?",
+                          f"Which companies specialise in {topic} for attorneys?"],
+        "legal_tech":    [f"Which platforms offer {topic} for IP professionals?",
+                          f"What are the best {topic} tools for patent attorneys?",
+                          f"Which companies specialise in {topic} for inventors?"],
+        "finance":       [f"Which platforms offer {topic} for finance teams?",
+                          f"What are the best {topic} solutions for CFOs?",
+                          f"Which tools help finance managers with {topic}?"],
+        "hr":            [f"Which platforms offer {topic} for HR teams?",
+                          f"What are the best {topic} tools for talent acquisition?",
+                          f"Which companies specialise in {topic} for recruiting?"],
+        "manufacturing": [f"Which solutions offer {topic} for manufacturing companies?",
+                          f"What are the best {topic} platforms for industrial teams?",
+                          f"Which vendors specialise in {topic} for factory operations?"],
+        "hospitality":   [f"Which platforms offer {topic} for hotels and hospitality?",
+                          f"What are some good {topic} solutions for travel companies?",
+                          f"Which tools help hospitality managers with {topic}?"],
+        "nonprofit":     [f"Which platforms offer {topic} for non-profit organisations?",
+                          f"What are some affordable {topic} solutions for NGOs?",
+                          f"Which companies support non-profits with {topic}?"],
+    }
+    _s2_ex = _slot2_examples.get(_industry, _slot2_examples["saas"])
+
+    # ── Slot 3 examples by industry ───────────────────────────────────────────
+    # Alternates between criteria-selection and how-to across topics
+    _topic_hash_s3 = sum(ord(c) for c in topic) % 2  # 0 = criteria, 1 = how-to
+    _slot3_criteria = {
+        "saas":          f"What should I look for when choosing a {topic} tool for my startup?",
+        "agency":        f"What should I look for when hiring a {topic} agency?",
+        "training":      f"What should I consider when choosing a {topic} training provider?",
+        "it_training":   f"What certifications should a {topic} vendor have?",
+        "content_agency":f"What should I look for when hiring a {topic} content agency?",
+        "ecommerce":     f"What should an online store owner look for in a {topic} platform?",
+        "healthcare":    f"What should a hospital administrator look for in a {topic} solution?",
+        "legal":         f"What should a law firm consider when choosing a {topic} platform?",
+        "legal_tech":    f"What should a patent attorney look for in a {topic} tool?",
+        "finance":       f"What should a CFO look for in a {topic} solution?",
+        "hr":            f"What should an HR director look for in a {topic} platform?",
+        "manufacturing": f"What should a plant manager consider when choosing a {topic} system?",
+        "hospitality":   f"What should a hotel manager look for in a {topic} solution?",
+        "nonprofit":     f"What should a non-profit director look for in an affordable {topic} tool?",
+    }
+    _slot3_howto = {
+        "saas":          f"How can a startup integrate {topic} into their workflow?",
+        "agency":        f"How can a Series A company build a {topic} strategy from scratch?",
+        "training":      f"How do IT teams get started with {topic} certification?",
+        "it_training":   f"How can a network team prepare for {topic} certification?",
+        "content_agency":f"How can a lean marketing team implement {topic} effectively?",
+        "ecommerce":     f"How can an online store use {topic} to increase conversions?",
+        "healthcare":    f"How can a hospital implement {topic} while maintaining compliance?",
+        "legal":         f"How can a law firm implement {topic} without disrupting workflows?",
+        "legal_tech":    f"How do inventors use {topic} before filing a patent?",
+        "finance":       f"How can a finance team use {topic} to improve reporting accuracy?",
+        "hr":            f"How do HR teams use {topic} to reduce time-to-hire?",
+        "manufacturing": f"How can a factory implement {topic} to reduce downtime?",
+        "hospitality":   f"How can a hotel chain implement {topic} to improve guest experience?",
+        "nonprofit":     f"How can an NGO use {topic} on a limited budget?",
+    }
+    _s3_example = (
+        _slot3_criteria.get(_industry, _slot3_criteria["saas"])
+        if _topic_hash_s3 == 0
+        else _slot3_howto.get(_industry, _slot3_howto["saas"])
+    )
+    _s3_type = "criteria-selection question" if _topic_hash_s3 == 0 else "how-to question"
+
     prompt = (
-        "You are an expert GEO (Generative Engine Optimization) strategist who understands "
-        "how real buyers search across every industry and niche.\n\n"
+        "You are an expert GEO (Generative Engine Optimization) strategist who deeply understands\n"
+        "how real buyers search in AI tools like ChatGPT, Perplexity, and Gemini\n"
+        "across every industry and niche globally.\n\n"
+        "You study the brand context carefully and generate prompts that sound exactly\n"
+        "like how a real person in that specific industry would type into ChatGPT.\n"
+        "Every prompt must feel native to that brand's world, not generic.\n\n"
         + term_glossary
         + "BRAND CONTEXT:\n"
-        "Business type: " + business_type + "\n"
-        "Solution type: " + cat_word + "\n"
+        + "Industry detected: " + _industry.replace("_", " ").title() + "\n"
+        + "Business type: " + business_type + "\n"
+        + "Solution type: " + cat_word + "\n"
         + cat_ban
         + "Context: " + context_block + "\n"
         + competitor_context
         + country_system + "\n\n"
-        "GENERATE EXACTLY 5 PROMPTS for TOPIC: \"" + topic + "\"\n\n"
-        "PROMPT 1 — DIRECT SEARCH:\n"
-        "The exact topic phrase as typed. Nothing added. No question mark.\n"
-        "Output: '" + topic + "'\n\n"
-        "PROMPT 2 — DISCOVERY (third person, no 'best', no 'I'):\n"
-        "MUST start with: '" + p2_opener + "'\n"
-        + cat_ban +
-        "CORRECT: '" + p2_opener + " offer [topic feature]?'\n"
-        "CORRECT: '" + p2_opener + " specialise in [topic]?'\n"
-        "WRONG: 'Which software offer...' (software is uncountable — use tools/platforms)\n"
-        "WRONG: 'best...' or any first-person opener\n\n"
-        "PROMPT 3 — CASUAL DISCOVERY (third person, different opener from prompt 2):\n"
-        "MUST start with: '" + p3_opener + "' OR 'Where can I find' OR 'Is there a' OR 'Who offers'\n"
-        "Different intent from prompt 2. Never the same opening word.\n"
-        + cat_ban +
-        "CORRECT: '" + p3_opener + " that handle [topic]?'\n"
-        "WRONG: same opening as prompt 2. WRONG: 'I' or 'we'.\n\n"
-        "PROMPT 4 — PERSONA (first person, starts with I or we):\n"
-        "MUST start with 'I' or 'we'. This is the ONLY first-person prompt.\n"
-        "Persona: " + persona_role + " — singular. Never pluralise.\n"
-        "Short and casual. References a key differentiator from the brand context.\n"
-        "GRAMMAR: 'I am a " + persona_role + "' NEVER 'I am a " + persona_role + "s'\n"
-        "Ends with: 'What do you recommend?' OR 'Any suggestions?' OR 'Which would you go with?'\n"
-        "CORRECT: 'I am a " + persona_role + " and I need [differentiator] for [topic]. What do you recommend?'\n\n"
-        "PROMPT 5 — COMPARISON (mandatory, always present):\n"
-        "MUST be: 'How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "[competitor]") + " for [topic]?'\n"
-        "Brand name '" + brand_name + "' is REQUIRED in this prompt — exact capitalisation.\n"
-        "Competitor must be from the Direct Competitors field only: " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + "\n"
-        "NEVER omit this prompt. NEVER use a competitor not from the input field.\n\n"
-        "ABSOLUTE RULES:\n"
-        "1. Prompts 1-4: NEVER mention '" + brand_name + "'\n"
-        "2. Prompt 5 ALWAYS names '" + brand_name + "' and a competitor\n"
-        "3. 'best' is BANNED from prompts 2, 3, and 4\n"
-        "4. No two prompts start with the same word\n"
-        "5. Prompts 2 and 3 are THIRD PERSON — never 'I' or 'we'\n"
-        "6. Prompt 4 is the ONLY first-person prompt\n"
-        "7. Every prompt contains at least one word from: '" + topic + "'\n"
-        "8. No year numbers. No country names in prompt text\n"
-        "9. Singular grammar: 'I am a researcher' NEVER 'I am a researchers'\n"
-        "10. If two prompts look similar — rewrite one from a completely different angle\n"
-        "\nReturn ONLY a JSON array of exactly 5 strings. No markdown."
+        + "GENERATE EXACTLY 5 PROMPTS for TOPIC: \"" + topic + "\"\n\n"
+        + "PROMPT 1 — PLAIN KEYWORD:\n"
+        + "Copy the topic phrase exactly: '" + topic + "'\n\n"
+        + "PROMPT 2 — DISCOVERY / BEST-OF (third person, no first person):\n"
+        + "Must start with: '" + p2_opener + "' (mandatory for this business type)\n"
+        + cat_ban
+        + "Industry-appropriate examples:\n"
+        + "  '" + _s2_ex[0] + "'\n"
+        + "  '" + _s2_ex[1] + "'\n"
+        + "WRONG: 'Which software offer...' (uncountable noun). WRONG: starts with I/we.\n\n"
+        + "PROMPT 3 — " + _s3_type.upper() + " (third person, different from prompt 2):\n"
+        + "Must NOT start with the same word as prompt 2.\n"
+        + "Must be a " + _s3_type + " — different intent from prompt 2.\n"
+        + "Industry-appropriate example:\n"
+        + "  '" + _s3_example + "'\n"
+        + "WRONG: same opening word as prompt 2. WRONG: first person.\n\n"
+        + "PROMPT 4 — PERSONA WITH DIFFERENTIATOR (first person, casual, natural):\n"
+        + "Must start with 'I' or 'we'. The ONLY first-person prompt.\n"
+        + "Persona: " + persona_role + " — singular. Never pluralise.\n"
+        + "Tone must match the industry: a " + _industry.replace("_"," ") + " buyer sounds different from others.\n"
+        + "References one differentiator from the key features.\n"
+        + "GRAMMAR: 'I am a " + persona_role + "' NEVER 'I am a " + persona_role + "s'\n"
+        + "Ends with: 'What do you recommend?' OR 'Any suggestions?' OR 'Which would you go with?'\n"
+        + "CORRECT: 'I am a " + persona_role + " and I need [differentiator] for [topic]. What do you recommend?'\n"
+        + "BAD: 'I am a professional and I need X' (too generic)\n"
+        + "BAD: 'I need a seamless experience' (marketing language not natural speech)\n\n"
+        + "PROMPT 5 — COMPARISON (mandatory, always present):\n"
+        + "Format: 'How does " + brand_name + " compare to [competitor] for [topic]?'\n"
+        + "Brand name '" + brand_name + "' required — exact capitalisation from user input.\n"
+        + "Competitor from Direct Competitors field only: " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + "\n"
+        + "NEVER omit. NEVER use a competitor not from the input field.\n\n"
+        + "ABSOLUTE RULES:\n"
+        + "1. Prompts 1-4: NEVER mention '" + brand_name + "'\n"
+        + "2. Prompt 5 ALWAYS names '" + brand_name + "' and the competitor\n"
+        + "3. No two prompts start with the same word\n"
+        + "4. Prompts 2 and 3 are THIRD PERSON only\n"
+        + "5. Prompt 4 is the ONLY first-person prompt\n"
+        + "6. Every prompt contains a word from: '" + topic + "'\n"
+        + "7. No year numbers. No country names in prompt text.\n"
+        + "8. Singular grammar always.\n"
+        + "9. Golden standard: would a real " + _industry.replace("_"," ") + " buyer actually type this into ChatGPT?\n"
+        + "   If it sounds like a template, regenerate. If it sounds like a real human, it passes.\n"
+        + "\nReturn ONLY a JSON array of exactly 5 strings. No markdown."
     )
     import re as _re
     year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
