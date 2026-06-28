@@ -13,6 +13,24 @@ GEMINI_MODELS = [
     "gemini-1.5-flash-latest",
 ]
 
+CHATGPT_DEFAULT_MODEL = "gpt-5.5-instant"
+CHATGPT_FALLBACK_MODELS = ["gpt-5.4-mini", "gpt-5.4-nano"]
+# High enough for full ChatGPT-style answers (tables, comparisons, multi-section replies).
+CHATGPT_MAX_OUTPUT_TOKENS = 16384
+
+CHATGPT_SYSTEM_INSTRUCTION = (
+    "Answer the user's question thoroughly and completely, the same way you would "
+    "in the ChatGPT web interface. For product, service, or vendor recommendations: "
+    "mention specific company and product names; use comparison tables when helpful; "
+    "organize with clear sections and bullet points; give practical recommendations "
+    "by use case or buyer stage. Do not artificially shorten your answer."
+)
+
+
+def _is_openai_rate_limit_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(x in msg for x in ["429", "rate_limit", "quota", "resource_exhausted", "insufficient_quota"])
+
 # =============================================================================
 # USAGE TRACKER
 # =============================================================================
@@ -198,119 +216,101 @@ def run_on_gemini(query: str) -> str:
 
 def run_on_chatgpt(query: str, country: str = "") -> dict:
     """
-    Runs query through GPT-4o with live web search enabled.
+    Runs query through GPT-5.5 Instant with live web search enabled.
+    Falls back to GPT-5.4 mini / nano when rate limits are hit.
     Returns: {"text": str, "sources": list, "web_searched": bool}
     This matches the ChatGPT web interface behaviour - grounded in live web results.
-    Universal dict format - future tools (Perplexity, Gemini, Claude) return same structure.
     country: optional ISO country code or name for geographic relevance (e.g. "US", "India")
     """
     try:
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-        # Use OpenAI Responses API with web_search_preview tool
-        # This matches what users see in ChatGPT web interface
         web_search_error = None
+        models_to_try = [CHATGPT_DEFAULT_MODEL] + CHATGPT_FALLBACK_MODELS
 
-        # ── Method 1: Responses API with web_search tool (recommended) ────────
-        try:
-            response = client.responses.create(
-                model="gpt-4o",
-                tools=[{"type": "web_search"}],
-                input=query,
-                max_output_tokens=1000
-            )
+        for model_name in models_to_try:
+            # ── Method 1: Responses API with web_search tool ────────────────
+            try:
+                response = client.responses.create(
+                    model=model_name,
+                    instructions=CHATGPT_SYSTEM_INSTRUCTION,
+                    tools=[{"type": "web_search"}],
+                    input=query,
+                    max_output_tokens=CHATGPT_MAX_OUTPUT_TOKENS
+                )
 
-            result_text = ""
-            sources = []
+                result_text = ""
+                sources = []
 
-            # output_text is the most direct way to get response text
-            if hasattr(response, "output_text") and response.output_text:
-                result_text = response.output_text.strip()
+                if hasattr(response, "output_text") and response.output_text:
+                    result_text = response.output_text.strip()
 
-            # Parse output items for source citations
-            if hasattr(response, "output"):
-                for item in response.output:
-                    item_type = getattr(item, "type", "")
-                    if item_type == "message":
-                        for block in item.content:
-                            if not result_text and hasattr(block, "text"):
-                                result_text = block.text.strip()
-                            if hasattr(block, "annotations"):
-                                for ann in block.annotations:
-                                    url = getattr(ann, "url", "")
-                                    if url:
-                                        parts = url.split("/")
-                                        domain = parts[2] if len(parts) > 2 else url
-                                        sources.append({
-                                            "title": getattr(ann, "title", domain),
-                                            "url": url,
-                                            "domain": domain
-                                        })
+                if hasattr(response, "output"):
+                    for item in response.output:
+                        item_type = getattr(item, "type", "")
+                        if item_type == "message":
+                            for block in item.content:
+                                if not result_text and hasattr(block, "text"):
+                                    result_text = block.text.strip()
+                                if hasattr(block, "annotations"):
+                                    for ann in block.annotations:
+                                        url = getattr(ann, "url", "")
+                                        if url:
+                                            parts = url.split("/")
+                                            domain = parts[2] if len(parts) > 2 else url
+                                            sources.append({
+                                                "title": getattr(ann, "title", domain),
+                                                "url": url,
+                                                "domain": domain
+                                            })
 
-            if result_text:
-                track_usage("ChatGPT", result_text)
-                return {"text": result_text, "sources": sources, "web_searched": True}
-            else:
-                web_search_error = "Responses API returned empty text"
+                if result_text:
+                    track_usage("ChatGPT", result_text)
+                    return {"text": result_text, "sources": sources, "web_searched": True, "model_used": model_name}
+                web_search_error = f"{model_name} Responses API returned empty text"
 
-        except Exception as e1:
-            web_search_error = f"Responses API: {str(e1)}"
+            except Exception as e1:
+                if _is_openai_rate_limit_error(e1) and model_name != models_to_try[-1]:
+                    web_search_error = f"{model_name} rate limited, trying fallback"
+                    continue
+                web_search_error = f"{model_name} Responses API: {str(e1)}"
 
-        # ── Method 2: Chat Completions with search-preview model ──────────────
-        try:
-            search_response = client.chat.completions.create(
-                model="gpt-4o-search-preview",
-                web_search_options={},
-                messages=[
-                    {"role": "user", "content": query}
-                ],
-                max_tokens=1000
-            )
-            result_text = search_response.choices[0].message.content.strip()
+            # ── Method 2: Chat Completions (standard) ─────────────────────────
+            try:
+                completion = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": CHATGPT_SYSTEM_INSTRUCTION},
+                        {"role": "user", "content": query}
+                    ],
+                    max_tokens=CHATGPT_MAX_OUTPUT_TOKENS
+                )
+                result_text = completion.choices[0].message.content.strip()
+                if result_text:
+                    track_usage("ChatGPT", result_text)
+                    return {
+                        "text": result_text,
+                        "sources": [],
+                        "web_searched": False,
+                        "model_used": model_name,
+                        "fallback_reason": web_search_error or ""
+                    }
+                web_search_error = (web_search_error or "") + f" | {model_name}: empty response"
 
-            # Extract citations from annotations if available
-            sources = []
-            msg = search_response.choices[0].message
-            if hasattr(msg, "annotations"):
-                for ann in (msg.annotations or []):
-                    url = getattr(ann, "url", "")
-                    if url:
-                        parts = url.split("/")
-                        domain = parts[2] if len(parts) > 2 else url
-                        sources.append({
-                            "title": getattr(ann, "title", domain),
-                            "url": url,
-                            "domain": domain
-                        })
+            except Exception as e2:
+                if _is_openai_rate_limit_error(e2) and model_name != models_to_try[-1]:
+                    web_search_error = f"{model_name} rate limited, trying fallback"
+                    continue
+                web_search_error = (web_search_error or "") + f" | {model_name}: {str(e2)}"
 
-            if result_text:
-                track_usage("ChatGPT", result_text)
-                return {"text": result_text, "sources": sources, "web_searched": True}
-            else:
-                web_search_error += " | Search-preview: empty response"
-
-        except Exception as e2:
-            web_search_error = (web_search_error or "") + f" | Search-preview: {str(e2)}"
-
-        # Fallback to standard completion
-        # Store the error so app.py can surface it to the user
         if web_search_error:
             if "web_search_errors" not in usage_stats:
                 usage_stats["web_search_errors"] = []
             usage_stats["web_search_errors"].append(str(web_search_error)[:200])
 
-        fallback = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Answer questions accurately and completely based on what is being asked."},
-                {"role": "user", "content": query}
-            ],
-            max_tokens=1000
-        )
-        result = fallback.choices[0].message.content.strip()
-        track_usage("ChatGPT", result)
-        return {"text": result, "sources": [], "web_searched": False, "fallback_reason": web_search_error or ""}
+        track_usage("ChatGPT", "", is_error=True)
+        return {"text": f"ERROR: {web_search_error or 'All ChatGPT models failed'}", "sources": [], "web_searched": False}
 
     except Exception as e:
         track_usage("ChatGPT", "", is_error=True)
@@ -388,7 +388,7 @@ ALL_TOOLS = {
         "requires_key": "OPENAI_API_KEY",
         "cost_per_call": 0.005,
         "free_limit": 0,
-        "description": "GPT-4o. Most widely used AI. Paid only."
+        "description": "GPT-5.5 Instant (fallback: GPT-5.4 mini/nano). Paid only."
     },
     "Claude": {
         "fn": run_on_claude,

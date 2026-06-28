@@ -2613,7 +2613,7 @@ elif st.session_state.step == 4:
                                                 highlighted,
                                                 flags=_re.IGNORECASE
                                             )
-                                        st.markdown(highlighted[:3000])
+                                        st.markdown(highlighted)
                                         if mentioned:
                                             st.success(f"✅ {brand_name} appears in this response")
                                     else:
@@ -2667,12 +2667,12 @@ elif st.session_state.step == 4:
                     "Context": r["brands_detected"]["target_context"],
                     "Linked Sites": len(r.get("linked_sites", [])),
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
-                    "Response Preview": r["response"][:200] + "..." if len(r.get("response", "")) > 200 else r.get("response", ""),
+                    "Full Response": r.get("response", ""),
                 })
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True, hide_index=True,
                          column_config={"Prompt": st.column_config.TextColumn(width="large"),
-                                        "Response Preview": st.column_config.TextColumn(width="large")})
+                                        "Full Response": st.column_config.TextColumn(width="large")})
 
             # ── CSV download ──────────────────────────────────────────────
             csv_rows = []
