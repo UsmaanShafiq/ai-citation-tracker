@@ -201,17 +201,30 @@ def _clean_topic(topic: str) -> str:
     topic = _normalise_abbr(topic)
     for pat in _FILLER:
         topic = _vre.sub(pat, '', topic, flags=_vre.IGNORECASE)
+    # "softwares" is not a word — software is uncountable
+    topic = _vre.sub(r'\bsoftwares\b', 'software', topic, flags=_vre.IGNORECASE)
+    # Strip banned first words — these belong in prompts not topic names
+    _BANNED = r'^(best|top|compare|comparing|which|who|how|what|are|is|find|get|discover|explore)\s+'
+    topic = _vre.sub(_BANNED, '', topic, flags=_vre.IGNORECASE).strip()
+    # Enforce 6-word maximum
+    words = topic.split()
+    if len(words) > 6:
+        topic = ' '.join(words[:6])
     return _vre.sub(r'\s+', ' ', topic).strip().strip(',').strip()
 
 # Priority 3: Grammar — "I am a/an" + singular noun
 _VOWELS = set('aeiouAEIOU')
 
 def _fix_article_grammar(text: str) -> str:
+    _UNCOUNTABLE = {"software", "hardware", "equipment", "information", "research", "advice"}
     def _fix(m):
-        prefix  = m.group(1)   # "I am " or "I'm "
-        article = m.group(2)   # "a" or "an"
-        noun    = m.group(3)   # noun (possibly plural)
-        rest    = m.group(4)   # rest of string
+        prefix  = m.group(1)
+        article = m.group(2)
+        noun    = m.group(3)
+        rest    = m.group(4)
+        # Uncountable nouns — drop article entirely
+        if noun.lower() in _UNCOUNTABLE:
+            return prefix.rstrip() + " " + noun + rest
         # Singularise
         if noun.endswith("ies") and len(noun) > 4:
             noun = noun[:-3] + "y"
@@ -223,13 +236,19 @@ def _fix_article_grammar(text: str) -> str:
             noun = noun[:-1]
         elif noun.endswith("sts"):
             noun = noun[:-1]
-        # Fix article
+        # Fix article for vowel sounds
         article = "an" if noun and noun[0] in _VOWELS else "a"
         return prefix + article + " " + noun + rest
-    return _vre.sub(
+    # Fix "I am a/an <noun>" patterns
+    text = _vre.sub(
         r"(I(?:'m| am) )(a|an) ([A-Za-z]+)(.*)",
         _fix, text, flags=_vre.IGNORECASE
     )
+    # Fix standalone "a software" / "an software" anywhere in text
+    text = _vre.sub(r'\b(a|an) software\b', 'software', text, flags=_vre.IGNORECASE)
+    # Fix softwares anywhere in prompt text
+    text = _vre.sub(r'\bsoftwares\b', 'software', text, flags=_vre.IGNORECASE)
+    return text
 
 # Priority 7: Brand name capitalisation enforcement
 def _fix_brand_cap(text: str, brand_name: str) -> str:
@@ -724,36 +743,45 @@ def ai_generate_topics(brand_data: dict) -> list:
     buyer_search_list = "\n".join(("- " + s) for s in buyer_searches[:5]) if buyer_searches else ""
 
     topic_prompt = (
-        "You track brand visibility across AI tools like ChatGPT and Perplexity.\n\n"
+        "You generate topic names for AI visibility tracking.\n\n"
         + term_glossary
-        + "BUSINESS CONTEXT:\n"
+        + "BRAND INPUT DATA (use exact phrases from here as the core of each topic):\n"
         + "Brand: " + brand_name + "\n"
-        + "What they do: " + what_business_does + "\n"
-        + "Exact buyer: " + exact_buyer + "\n"
-        + "Business category: " + business_category + "\n"
-        + country_note
-        + "\nBRAND ANCHOR TERMS (at least 3 topics must include one of these):\n"
+        + "Business type: " + business_category + "\n"
+        + "Anchor terms (use at least 3 of these in topics):\n"
         + anchor_list
-        + "\n\nBUYER SEARCH PHRASES (starting point for topics):\n"
-        + buyer_search_list
         + "\n\nRAW BRAND DATA:\n"
         + raw_context
-        + "\nGenerate 7 topics this exact buyer types into ChatGPT when ready to choose.\n\n"
-        + "MANDATORY RULES:\n"
-        + "1. At least 3 topics MUST include one of the BRAND ANCHOR TERMS above\n"
-        + "2. Start from BUYER SEARCH PHRASES then expand and vary them\n"
-        + "3. Every topic must make ChatGPT name specific brands in its answer\n"
-        + "4. Every topic needs a category word: " + business_category + ", agency, firm, service, software, platform\n"
-        + "5. No '" + brand_name + "' in any topic\n"
-        + "6. AVOID vague terms ChatGPT misinterprets:\n"
-        + "   BAD: 'GEO agency' alone (reads as Geographic). GOOD: 'best Generative Engine Optimization agency for SaaS'\n"
-        + "   BAD: 'cybersecurity training'. GOOD: 'best authorized Palo Alto Networks training company'\n"
-        + "7. Use real product names, vendor names, certification names from brand data above\n"
-        + "8. No educational or how-to topics\n"
+        + country_note
+        + "\nGenerate 5 topic names. Each topic is a short noun phrase, not a question.\n\n"
+        + "TOPIC NAME RULES — apply all strictly:\n"
+        + "1. LENGTH: 3 to 6 words maximum. No exceptions.\n"
+        + "2. FORMAT: Noun phrases only. Never a question. Never a command.\n"
+        + "   Topics describe a category of thing, not an action or question.\n"
+        + "3. BANNED FIRST WORDS: Never start a topic with best, top, compare, which,\n"
+        + "   who, how, what, are, is, find, get, or any question word or superlative.\n"
+        + "   These words belong in prompts, not topic names.\n"
+        + "4. ONE CONCEPT: One clear idea per topic. Do not combine multiple ideas.\n"
+        + "5. VOCABULARY: Use exact product names and differentiator words from the\n"
+        + "   input data above. Add the business type word at the end if needed.\n"
+        + "6. SOFTWARE RULE: Write 'software' never 'softwares'. Software is uncountable.\n"
+        + "7. No '" + brand_name + "' in any topic.\n\n"
+        + "GOOD TOPIC EXAMPLES (noun phrases, 3-6 words):\n"
+        + "  For a patent search SaaS: 'free patent search tool', 'open source patent search',\n"
+        + "  'AI patent search software', 'patent search API', 'semantic prior art search'\n"
+        + "  For a content agency: 'B2B content marketing agency', 'SaaS content marketing services',\n"
+        + "  'LinkedIn ghostwriting for B2B', 'thought leadership content creation'\n"
+        + "  For a training company: 'Juniper Networks training providers',\n"
+        + "  'authorized Palo Alto Networks training', 'Fortinet NSE certification training'\n\n"
+        + "BAD TOPIC EXAMPLES (never generate these):\n"
+        + "  'best free patent search tool software for legal firms' (starts with best, too long)\n"
+        + "  'compare semantic patent search tools for researchers' (starts with compare)\n"
+        + "  'which AI patent search solution offers the fastest results' (question, too long)\n"
+        + "  'patent search softwares' (softwares is not a word)\n\n"
         + country_topic_note
-        + "\nFor each topic include one sentence of buyer intent.\n"
-        + 'Respond ONLY with JSON array: [{"topic": "...", "intent": "..."}, ...]\n'
-        + "No markdown, no explanation."
+        + "For each topic include one sentence of buyer intent.\n"
+        + 'Respond ONLY with JSON: [{"topic": "...", "intent": "..."}, ...]\n'
+        + "No markdown."
     )
 
     raw = _call_ai_for_json(topic_prompt)
