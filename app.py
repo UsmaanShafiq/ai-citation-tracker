@@ -876,7 +876,7 @@ def ai_generate_topics(brand_data: dict) -> list:
 
 
 
-def ai_generate_prompts(topic: str, brand_data: dict) -> list:
+def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> list:
     brand_name = brand_data["name"]
     products_list = brand_data.get("products", [])
     customers_list = brand_data.get("customers", [])
@@ -1484,11 +1484,11 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         brand_name.lower() in p.lower() and _comp_name.lower() in p.lower()
         for p in result
     )
-    if not _has_comparison:
+    if not _has_comparison and topic_index in [0, 2]:
         if len(result) < 5:
             result.append(_comparison)
         else:
-            result[4] = _comparison  # Always slot 5
+            result[4] = _comparison
 
     # P1: Structural duplicate check — auto-regenerate if dupes found
     if _has_structural_dupes(result):
@@ -1503,8 +1503,6 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             regen_clean = process_raw(regen)
             if regen_clean and not _has_structural_dupes([topic] + regen_clean):
                 result = ([topic] + regen_clean)[:5]
-                # Re-inject comparison as prompt 5
-                result[4] = _comparison
         except Exception:
             pass
 
@@ -1538,8 +1536,27 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         _pad_i += 1
 
     result = result[:5]
-    # Always ensure prompt 5 is the comparison
-    result[4] = _comparison
+    result[0] = topic  # Always exact topic name — no grammar functions ever touch slot 1
+
+    # Slot 5: comparison only for topic groups 1 and 3 (index 0 and 2)
+    # Other topics use rotating slot 5 types — avoids formulaic comparison in every topic
+    if topic_index in [0, 2]:
+        result[4] = _comparison
+    elif topic_index == 1:
+        _outcome = (
+            "How does " + topic + " help " + persona_role + "s achieve better results?"
+        )
+        result[4] = _fix_brand_cap(_normalise_abbr(_outcome), brand_name)
+    elif topic_index == 3:
+        _examples = (
+            "Can you give examples of companies that have used " + topic + " successfully?"
+        )
+        result[4] = _fix_brand_cap(_normalise_abbr(_examples), brand_name)
+    else:
+        _casual = (
+            "Where can I find a " + prompt_word + " that specialises in " + topic + "?"
+        )
+        result[4] = _fix_brand_cap(_normalise_abbr(_casual), brand_name)
 
     # ── Grammar audit pass — runs on all 5 prompts before display ─────────────
     # Catches errors the model produced despite rules:
@@ -1575,8 +1592,11 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         if len(_audit_lines) >= 4:
             # Apply brand cap fix in case the auditor changed capitalisation
             result = [_fix_brand_cap(p, brand_name) for p in _audit_lines]
-            # Re-ensure comparison is still slot 5
-            result[4] = _comparison
+            # Restore slot 1 to exact topic name (audit must not modify it)
+            result[0] = topic
+            # Restore slot 5 per topic_index (audit must not change the type)
+            if topic_index in [0, 2]:
+                result[4] = _comparison
     except Exception:
         pass  # If audit fails, return the unaudited result — never block display
 
@@ -2077,34 +2097,6 @@ elif st.session_state.step == 2:
                     st.info(website_text[:400] + "...")
 
                 st.divider()
-
-                # ── Section 2: From Form ──────────────────────────────────
-                st.markdown("### 📝 From Your Form")
-                st.caption("This is what you entered manually in Step 1.")
-
-                form_cols = st.columns(2)
-                with form_cols[0]:
-                    if bd.get("products"):
-                        st.markdown("**📦 Products / Services**")
-                        for p in bd["products"]:
-                            st.markdown(f"- {p}")
-                    if bd.get("customers"):
-                        st.markdown("**👥 Target Customers**")
-                        for c in bd["customers"]:
-                            st.markdown(f"- {c}")
-                with form_cols[1]:
-                    if bd.get("key_features"):
-                        st.markdown("**⭐ Key Differentiators**")
-                        for f in bd["key_features"]:
-                            st.markdown(f"- {f}")
-                    if bd.get("competitors"):
-                        st.markdown("**🏁 Direct Competitors**")
-                        for comp in bd["competitors"]:
-                            st.markdown(f"- {comp}")
-                    st.markdown(f"**🌍 Country:** {bd.get('country', 'United States')}")
-                    st.markdown(f"**🏢 Business Type:** {bd.get('business_type', '')}")
-
-                st.divider()
                 st.success("✅ Topics will be generated using BOTH your website content and your form data.")
         else:
             st.warning(
@@ -2112,29 +2104,6 @@ elif st.session_state.step == 2:
                 "Topics will be generated from your form data only. "
                 "Check that your domain is correct and publicly accessible."
             )
-            with st.expander("📋 Form Data Being Used", expanded=True):
-                st.markdown("### 📝 From Your Form")
-                st.caption("Website could not be fetched — using form data only.")
-                form_cols2 = st.columns(2)
-                with form_cols2[0]:
-                    if bd.get("products"):
-                        st.markdown("**📦 Products / Services**")
-                        for p in bd["products"]:
-                            st.markdown(f"- {p}")
-                    if bd.get("customers"):
-                        st.markdown("**👥 Target Customers**")
-                        for c in bd["customers"]:
-                            st.markdown(f"- {c}")
-                with form_cols2[1]:
-                    if bd.get("key_features"):
-                        st.markdown("**⭐ Key Differentiators**")
-                        for f in bd["key_features"]:
-                            st.markdown(f"- {f}")
-                    if bd.get("competitors"):
-                        st.markdown("**🏁 Direct Competitors**")
-                        for comp in bd["competitors"]:
-                            st.markdown(f"- {comp}")
-                    st.markdown(f"**🌍 Country:** {bd.get('country', 'United States')}")
 
         # ── Step 3: Generate topics ───────────────────────────────────────────
         with st.spinner("🔍 Generating topics based on your brand profile..."):
@@ -2242,11 +2211,11 @@ elif st.session_state.step == 3:
     st.caption("These prompts will be sent to each AI model to check if your brand is mentioned.")
 
     # Generate prompts for each selected topic FIRST before showing count
-    for topic in st.session_state.selected_topics:
+    for t_idx, topic in enumerate(st.session_state.selected_topics):
         if topic not in st.session_state.prompts_by_topic:
             with st.spinner(f"Generating prompts for: {topic}..."):
                 try:
-                    prompts = ai_generate_prompts(topic, st.session_state.brand_data)
+                    prompts = ai_generate_prompts(topic, st.session_state.brand_data, topic_index=t_idx)
                     st.session_state.prompts_by_topic[topic] = prompts
                     st.session_state.selected_prompts[topic] = list(prompts)
                 except Exception as e:
