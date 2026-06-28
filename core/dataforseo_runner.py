@@ -2,21 +2,19 @@
 core/dataforseo_runner.py
 
 DataForSEO AI Optimization — ChatGPT LLM Responses (Live endpoint).
-This replaces the old ai_runner.py for tracking runs.
+Replaces the old ai_runner.py for tracking runs.
 
-The old ai_runner.py is preserved untouched and can be re-enabled by
-changing the import line in app.py back to:
+To revert to old runner, change the import in app.py back to:
     from core.ai_runner import ALL_TOOLS, run_selected_tools, ...
 
-Endpoint: POST https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_responses/live
-
-Auth: HTTPBasicAuth(DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD)
-  OR store Base64(login:password) in DATAFORSEO_API_KEY env var.
-
-Why Live over Standard:
-  Live returns immediately — no polling loop needed.
-  Standard requires task_post then task_get polling.
-  For a Streamlit tracking run, Live is simpler and more reliable.
+Response structure (confirmed from live API docs):
+tasks[0].result[0].items[]
+  - type = "reasoning"  → skip (internal chain of thought)
+  - type = "message"    → use this
+      .sections[]
+          .type = "text"
+          .text = actual response text
+          .annotations[] = [{title, url}, ...]
 """
 
 import os
@@ -29,15 +27,14 @@ load_dotenv()
 
 
 # =============================================================================
-# TOOL REGISTRY — shape matches what app.py expects from ai_runner
+# TOOL REGISTRY
 # =============================================================================
 
 ALL_TOOLS = {
     "ChatGPT (DataForSEO)": {
         "description": (
             "Real ChatGPT responses via DataForSEO LLM Responses API. "
-            "Routes prompts through the actual ChatGPT interface rather than "
-            "the OpenAI API directly, giving results closer to what users see."
+            "Routes prompts through the actual ChatGPT interface, not the OpenAI API directly."
         ),
         "requires_key": "DATAFORSEO_LOGIN",
         "free": False,
@@ -82,9 +79,8 @@ def _track(text: str, is_error: bool = False):
 def _get_auth() -> tuple:
     """
     Returns (login, password) for HTTPBasicAuth.
-
     Priority:
-    1. DATAFORSEO_LOGIN + DATAFORSEO_PASSWORD env vars (recommended)
+    1. DATAFORSEO_LOGIN + DATAFORSEO_PASSWORD env vars
     2. DATAFORSEO_API_KEY env var containing Base64(login:password)
     """
     login    = os.environ.get("DATAFORSEO_LOGIN", "").strip()
@@ -128,37 +124,34 @@ _COUNTRY_ISO = {
 # =============================================================================
 
 _LIVE_URL = "https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_responses/live"
-_MODEL    = "gpt-4.1-mini"   # fast, web-search capable, cost-effective
+_MODEL    = "gpt-4.1-mini"
 
 
 def _call_live(prompt: str, country: str = "") -> dict:
     """
     Sends one prompt to DataForSEO ChatGPT LLM Responses Live endpoint.
 
-    Returns:
-        {
-            "text": str,          # full response text
-            "sources": list,      # [{url, title, domain}, ...]
-            "web_searched": bool,
-        }
+    Confirmed response path (from API docs + live example):
+      tasks[0].result[0].items[]
+        → skip type="reasoning"
+        → use  type="message"
+             .sections[].text       ← response text
+             .sections[].annotations[].url/title  ← sources
     """
     login, password = _get_auth()
     if not login or not password:
         return {
             "text": (
-                "ERROR: DataForSEO credentials not configured. "
+                "ERROR: DataForSEO credentials not set. "
                 "Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD in the API Keys sidebar."
             ),
             "sources": [],
             "web_searched": False,
         }
 
-    # Truncate to 500 char API limit
-    user_prompt = prompt.strip()[:500]
-
     payload = [{
         "model_name": _MODEL,
-        "user_prompt": user_prompt,
+        "user_prompt": prompt.strip()[:500],   # API hard limit
         "web_search": True,
         "max_output_tokens": 1024,
     }]
@@ -173,74 +166,90 @@ def _call_live(prompt: str, country: str = "") -> dict:
             _LIVE_URL,
             json=payload,
             auth=HTTPBasicAuth(login, password),
-            timeout=90,
+            timeout=120,   # API docs say up to 120 seconds
         )
         resp.raise_for_status()
         data = resp.json()
     except requests.exceptions.Timeout:
-        return {"text": "ERROR: DataForSEO request timed out (90s). Try again.", "sources": [], "web_searched": False}
+        return {"text": "ERROR: DataForSEO request timed out (120s).", "sources": [], "web_searched": False}
     except requests.exceptions.HTTPError as e:
-        return {"text": f"ERROR: DataForSEO HTTP error {e.response.status_code}: {e}", "sources": [], "web_searched": False}
+        code = e.response.status_code if e.response is not None else "?"
+        body = ""
+        try:
+            body = e.response.text[:300]
+        except Exception:
+            pass
+        return {"text": f"ERROR: DataForSEO HTTP {code}: {body}", "sources": [], "web_searched": False}
     except requests.exceptions.RequestException as e:
         return {"text": f"ERROR: DataForSEO connection failed: {e}", "sources": [], "web_searched": False}
 
-    # Parse response structure:
-    # data.tasks[0].result[0].items[].sections[].text
-    # data.tasks[0].result[0].items[].annotations[].url / .title
+    # ── Parse response ────────────────────────────────────────────────────────
     try:
-        tasks = data.get("tasks", [])
+        tasks = data.get("tasks") or []
         if not tasks:
             return {"text": "ERROR: DataForSEO returned no tasks.", "sources": [], "web_searched": False}
 
-        task = tasks[0]
+        task        = tasks[0]
         status_code = task.get("status_code", 0)
         status_msg  = task.get("status_message", "")
 
         if status_code != 20000:
             return {
-                "text": f"ERROR: DataForSEO task failed (status {status_code}): {status_msg}",
+                "text": f"ERROR: DataForSEO task failed (code {status_code}): {status_msg}",
                 "sources": [],
                 "web_searched": False,
             }
 
         results = task.get("result") or []
         if not results:
-            return {"text": "ERROR: DataForSEO returned empty result.", "sources": [], "web_searched": False}
+            return {"text": "ERROR: DataForSEO returned empty result array.", "sources": [], "web_searched": False}
 
-        result  = results[0]
-        items   = result.get("items") or []
+        result = results[0]
+        items  = result.get("items") or []
 
         text_parts = []
         sources    = []
 
         for item in items:
-            # Extract text from sections
+            item_type = item.get("type", "")
+
+            # Skip reasoning items — they are internal chain-of-thought, not the response
+            if item_type == "reasoning":
+                continue
+
+            # Only process message items
+            if item_type != "message":
+                continue
+
             for section in item.get("sections") or []:
+                # Extract response text
                 t = (section.get("text") or "").strip()
                 if t:
                     text_parts.append(t)
 
-            # Extract source citations from annotations
-            for ann in item.get("annotations") or []:
-                url   = (ann.get("url") or "").strip()
-                title = (ann.get("title") or url or "Source").strip()
-                if url:
-                    domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-                    sources.append({"url": url, "title": title, "domain": domain})
+                # Extract source annotations (confirmed inside sections)
+                for ann in section.get("annotations") or []:
+                    url   = (ann.get("url") or "").strip()
+                    title = (ann.get("title") or url or "Source").strip()
+                    if url:
+                        domain = url.replace("https://", "").replace("http://", "").split("/")[0]
+                        # Strip ?utm_source=openai tracking params for clean display
+                        clean_url = url.split("?utm_source=")[0] if "?utm_source=" in url else url
+                        sources.append({"url": clean_url, "title": title, "domain": domain})
 
         full_text = "\n\n".join(text_parts).strip()
 
-        # Some models put text directly on result rather than in items
         if not full_text:
-            full_text = (result.get("text") or "").strip()
-
-        if not full_text:
-            return {"text": "ERROR: DataForSEO returned no text content.", "sources": [], "web_searched": True}
+            return {
+                "text": "ERROR: DataForSEO returned no message content.",
+                "sources": [],
+                "web_searched": result.get("web_search", False),
+            }
 
         return {
             "text": full_text,
             "sources": sources,
-            "web_searched": True,
+            "web_searched": result.get("web_search", True),
         }
 
     except Exception as e:
@@ -258,7 +267,6 @@ def _call_live(prompt: str, country: str = "") -> dict:
 def run_selected_tools(query: str, selected_tools: list, country: str = "") -> dict:
     """
     Runs query through DataForSEO ChatGPT LLM Responses.
-
     Returns dict keyed by tool name — matches old ai_runner.run_selected_tools.
     """
     results = {}

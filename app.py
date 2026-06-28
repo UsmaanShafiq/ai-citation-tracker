@@ -2268,6 +2268,10 @@ elif st.session_state.step == 4:
                 st.warning("All tools rate-limited. Stopping early.")
                 break
 
+            # Debug: show what tools are being called (remove after confirming working)
+            if i == 0:
+                st.caption(f"🔧 Debug — Active tools: {active_tools}")
+
             tool_responses = run_selected_tools(q["query"], active_tools, country=bd.get("country", ""))
 
             for tool_name, raw_response in tool_responses.items():
@@ -2301,6 +2305,9 @@ elif st.session_state.step == 4:
 
                 if response_text.startswith("ERROR"):
                     clean_error = response_text.split("ERROR:", 1)[-1].strip()
+                    # Show error in UI so user can see what went wrong
+                    if i == 0:
+                        st.warning(f"⚠️ DataForSEO error on first call: {clean_error[:200]}")
                     if any(x in clean_error.lower() for x in ["429", "rate_limit", "resource_exhausted", "quota"]):
                         exhausted_tools.add(tool_name)
                     call_count += 1
