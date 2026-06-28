@@ -663,6 +663,7 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     buyer_searches = brand_understanding.get("buyer_searches", [])
     business_category = brand_understanding.get("business_category", "agency")
+    category_word = business_category or business_type or "services"
     what_business_does = brand_understanding.get("what_business_does", "")
     exact_buyer = brand_understanding.get("exact_buyer", "")
 
