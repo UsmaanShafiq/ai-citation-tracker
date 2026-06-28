@@ -843,8 +843,10 @@ def ai_generate_topics(brand_data: dict) -> list:
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     brand_name = brand_data["name"]
-    products = ", ".join(brand_data.get("products", []))
-    customers = ", ".join(brand_data.get("customers", []))
+    products_list = brand_data.get("products", [])
+    customers_list = brand_data.get("customers", [])
+    products = ", ".join(products_list)
+    customers = ", ".join(customers_list)
     business_type = brand_data.get("business_type", "")
     domain = brand_data.get("domain", "")
 
