@@ -216,16 +216,54 @@ def _clean_topic(topic: str) -> str:
 _VOWELS = set('aeiouAEIOU')
 
 def _fix_article_grammar(text: str) -> str:
+    """
+    Fixes grammar errors in generated prompts:
+    1. Wrong plural forms: agencys→agencies, companys→companies
+    2. Missing articles: 'find agency' → 'find an agency'
+    3. Uncountable nouns: 'a software' → 'software', softwares→software
+    4. Article before vowel: 'a inventor' → 'an inventor'
+    5. Plural after singular article: 'a researchers' → 'a researcher'
+    """
     _UNCOUNTABLE = {"software", "hardware", "equipment", "information", "research", "advice"}
-    def _fix(m):
+
+    # Fix wrong plurals — y→ies rule (agency→agencies, company→companies)
+    _Y_PLURALS = {
+        "agencys": "agencies", "companys": "companies", "categorys": "categories",
+        "industrys": "industries", "librarys": "libraries", "propertys": "properties",
+        "territorys": "territories", "subsidiarys": "subsidiaries",
+    }
+    for wrong, right in _Y_PLURALS.items():
+        text = _vre.sub(r'\b' + wrong + r'\b', right, text, flags=_vre.IGNORECASE)
+
+    # Fix softwares
+    text = _vre.sub(r'\bsoftwares\b', 'software', text, flags=_vre.IGNORECASE)
+    text = _vre.sub(r'\b(a|an) software\b', 'software', text, flags=_vre.IGNORECASE)
+
+    # Fix missing article before singular countable nouns in common patterns
+    # "find agency" → "find an agency", "find company" → "find a company"
+    _NEED_ARTICLE = [
+        "agency", "company", "firm", "provider", "platform", "tool", "solution",
+        "partner", "vendor", "service", "consultant", "developer",
+    ]
+    for noun in _NEED_ARTICLE:
+        vowel = noun[0] in _VOWELS
+        article = "an" if vowel else "a"
+        # "find agency" → "find an agency" (missing article after verb)
+        text = _vre.sub(
+            r'\b(find|hire|choose|select|use|need|want|get) (' + noun + r')\b',
+            lambda m, a=article, n=noun: m.group(1) + ' ' + a + ' ' + m.group(2),
+            text, flags=_vre.IGNORECASE
+        )
+
+    def _fix_persona(m):
         prefix  = m.group(1)
         article = m.group(2)
         noun    = m.group(3)
         rest    = m.group(4)
-        # Uncountable nouns — drop article entirely
+        # Uncountable — drop article
         if noun.lower() in _UNCOUNTABLE:
             return prefix.rstrip() + " " + noun + rest
-        # Singularise
+        # Singularise plural after article
         if noun.endswith("ies") and len(noun) > 4:
             noun = noun[:-3] + "y"
         elif noun.endswith("ers") and not noun.endswith("eers"):
@@ -239,15 +277,12 @@ def _fix_article_grammar(text: str) -> str:
         # Fix article for vowel sounds
         article = "an" if noun and noun[0] in _VOWELS else "a"
         return prefix + article + " " + noun + rest
-    # Fix "I am a/an <noun>" patterns
+
+    # Fix "I am a/an <noun>" and "I'm a/an <noun>"
     text = _vre.sub(
         r"(I(?:'m| am) )(a|an) ([A-Za-z]+)(.*)",
-        _fix, text, flags=_vre.IGNORECASE
+        _fix_persona, text, flags=_vre.IGNORECASE
     )
-    # Fix standalone "a software" / "an software" anywhere in text
-    text = _vre.sub(r'\b(a|an) software\b', 'software', text, flags=_vre.IGNORECASE)
-    # Fix softwares anywhere in prompt text
-    text = _vre.sub(r'\bsoftwares\b', 'software', text, flags=_vre.IGNORECASE)
     return text
 
 # Priority 7: Brand name capitalisation enforcement
@@ -1334,21 +1369,21 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         """Returns True if this prompt should be rejected and regenerated."""
         return not is_citation_producing(p)
 
-    def process_raw(raw_prompts):
+    def process_raw(raw_prompts, slot_index=None):
         """Clean, filter, and validate a list of raw prompts using validation library."""
         cleaned = []
         for p in raw_prompts:
             p = p.strip()
             if not p:
                 continue
-            # Priority 5: normalise abbreviations (B2B, SEO etc)
+            # Normalise abbreviations (B2B, SEO etc)
             p = _normalise_abbr(p)
             # Strip year numbers
             p = year_pattern.sub("", p).strip()
             p = " ".join(p.split())
-            # Priority 3: fix article grammar (I am a/an + singular)
+            # Fix grammar (articles, plurals, vowel sounds)
             p = _fix_article_grammar(p)
-            # Priority 7: enforce brand name capitalisation
+            # Enforce brand name capitalisation
             p = _fix_brand_cap(p, brand_name)
             # Skip if contains brand name in prompts 1-4
             if brand_lower in p.lower() and "vs" not in p.lower() and "compare" not in p.lower():
@@ -1359,8 +1394,14 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             # Skip duplicates already in list
             if p.lower() in [x.lower() for x in cleaned]:
                 continue
-            # Priority 4: reject wrong category word
-            if hasattr(locals(), "cat_word") and _has_category_violation(p, cat_word):
+            # Reject wrong category word
+            if _has_category_violation(p, cat_word):
+                continue
+            # Fix 2: Slot 3 persona guard
+            # If this prompt is destined for slot 3, reject first-person "I" prompts
+            # Persona prompts belong in slot 4 only
+            _is_firstperson = p.lower().startswith("i ") or p.lower().startswith("i'm") or p.lower().startswith("i am")
+            if slot_index == 2 and _is_firstperson:  # slot_index 2 = position 3 (0-indexed)
                 continue
             # Skip prompts that will produce bad results
             if is_bad_prompt(p):
@@ -1486,6 +1527,46 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
     result = result[:5]
     # Always ensure prompt 5 is the comparison
     result[4] = _comparison
+
+    # ── Grammar audit pass — runs on all 5 prompts before display ─────────────
+    # Catches errors the model produced despite rules:
+    # agencys→agencies, missing 'a'/'an', subject-verb agreement, punctuation
+    try:
+        _numbered = "\n".join(f"{i+1}. {p}" for i, p in enumerate(result))
+        _audit_system = (
+            "You are a grammar checker. You will receive a numbered list of prompts. "
+            "Your only job is to fix clear grammar errors. "
+            "Do not change the meaning, direction, intent, topic, or wording of any prompt. "
+            "Do not rewrite prompts. Do not improve them. Do not make them sound better. "
+            "Only fix these specific error types: "
+            "wrong plural forms such as agencys instead of agencies; "
+            "missing articles such as missing a or an before singular countable nouns; "
+            "subject-verb agreement errors such as 'Which tools offers' instead of 'Which tools offer'; "
+            "punctuation errors such as missing question marks at the end of questions. "
+            "If a prompt has no grammar error return it exactly as received. "
+            "Return ONLY the corrected numbered list in exactly the same format as the input. "
+            "No explanation. No commentary."
+        )
+        _audit_user = (
+            "Check and fix grammar errors in these prompts only. "
+            "Return them in the same order and numbered format:\n\n"
+            + _numbered
+        )
+        _audit_raw = _call_ai_for_prompts(_audit_system, _audit_user)
+        # Parse the numbered list back into a flat list
+        _audit_lines = [
+            _vre.sub(r'^\d+\.\s*', '', line.strip())
+            for line in _audit_raw.strip().split('\n')
+            if _vre.match(r'^\d+\.', line.strip())
+        ]
+        if len(_audit_lines) == 5:
+            # Apply brand cap fix in case the auditor changed capitalisation
+            result = [_fix_brand_cap(p, brand_name) for p in _audit_lines]
+            # Re-ensure comparison is still slot 5
+            result[4] = _comparison
+    except Exception:
+        pass  # If audit fails, return the unaudited result — never block display
+
     return result
 
 
