@@ -55,14 +55,22 @@ def _get_key(env_key: str) -> str:
 
 
 def _call_ai_for_json(prompt: str) -> str:
-    """
-    Call best available AI model for JSON generation (topics/prompts).
-    Everything goes in user role. Temperature is default (low) for
-    structured JSON outputs like topic generation.
-    Errors are surfaced rather than silently swallowed so callers can
-    show meaningful messages and aid debugging.
-    """
-    last_error = None
+    """Call best available AI model for JSON generation (topics/prompts)."""
+    # GROQ DISABLED - uncomment below to re-enable
+    # groq_key = _get_key("GROQ_API_KEY")
+    # if groq_key:
+    #     try:
+    #         from groq import Groq
+    #         client = Groq(api_key=groq_key)
+    #         resp = client.chat.completions.create(
+    #             model="llama-3.3-70b-versatile",
+    #             messages=[{"role": "user", "content": prompt}],
+    #             max_tokens=2000,
+    #             temperature=0.7,
+    #         )
+    #         return resp.choices[0].message.content or ""
+    #     except Exception:
+    #         pass
 
     # Try Gemini
     gemini_key = _get_key("GEMINI_API_KEY")
@@ -72,8 +80,8 @@ def _call_ai_for_json(prompt: str) -> str:
             client = genai.Client(api_key=gemini_key)
             resp = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
             return resp.text or ""
-        except Exception as e:
-            last_error = f"Gemini error: {e}"
+        except Exception:
+            pass
 
     # Try OpenAI
     openai_key = _get_key("OPENAI_API_KEY")
@@ -87,23 +95,19 @@ def _call_ai_for_json(prompt: str) -> str:
                 max_tokens=2000,
             )
             return resp.choices[0].message.content or ""
-        except Exception as e:
-            last_error = f"OpenAI error: {e}"
+        except Exception:
+            pass
 
-    detail = f" Last error: {last_error}" if last_error else ""
-    raise Exception(f"No available AI model. Please add at least one API key.{detail}")
+    raise Exception("No available AI model. Please add at least one API key (Gemini, OpenAI, or Perplexity).")
 
 
 def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
     """
-    Dedicated function for prompt generation only.
-    Fix 1: system prompt in system role, topic in user role — separate fields.
-    Fix 2: temperature 0.8 — prevents repetitive/duplicate outputs.
-    Only uses OpenAI (system role support). Falls back to Gemini if needed.
+    Dedicated call for prompt generation.
+    System/user role split + temperature=0.8 for variety.
+    Prevents repetitive duplicate outputs.
     """
     last_error = None
-
-    # Try OpenAI with proper system/user split and temperature
     openai_key = _get_key("OPENAI_API_KEY")
     if openai_key:
         try:
@@ -116,30 +120,27 @@ def _call_ai_for_prompts(system_prompt: str, user_message: str) -> str:
                     {"role": "user",   "content": user_message},
                 ],
                 max_tokens=2000,
-                temperature=0.8,  # High enough for variety, low enough for structure
+                temperature=0.8,
             )
             return resp.choices[0].message.content or ""
         except Exception as e:
             last_error = f"OpenAI error: {e}"
-
-    # Fallback: Gemini (no system role, combine into single prompt)
     gemini_key = _get_key("GEMINI_API_KEY")
     if gemini_key:
         try:
-            from google import genai
-            client = genai.Client(api_key=gemini_key)
+            from google import genai as _genai
+            _client = _genai.Client(api_key=gemini_key)
             combined = system_prompt + "\n\n" + user_message
-            resp = client.models.generate_content(
+            _resp = _client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=combined,
                 config={"temperature": 0.8}
             )
-            return resp.text or ""
+            return _resp.text or ""
         except Exception as e:
             last_error = f"Gemini error: {e}"
-
     detail = f" Last error: {last_error}" if last_error else ""
-    raise Exception(f"No available AI model for prompt generation.{detail}")
+    raise Exception(f"No AI model available for prompt generation.{detail}")
 
 
 def _parse_json_list(text: str) -> list:
@@ -148,10 +149,9 @@ def _parse_json_list(text: str) -> list:
         result = json.loads(text)
         if isinstance(result, list):
             return result
-        if isinstance(result, dict):
-            for v in result.values():
-                if isinstance(v, list):
-                    return v
+        for v in result.values():
+            if isinstance(v, list):
+                return v
     except Exception:
         pass
     match = re.search(r'\[[\s\S]*?\]', text)
@@ -160,17 +160,141 @@ def _parse_json_list(text: str) -> list:
             return json.loads(match.group())
         except Exception:
             pass
-    # Fallback: extract quoted strings that look like real topics/prompts.
-    # Guard against pulling in error messages or metadata by requiring that
-    # candidates contain at least one space (i.e. they're multi-word phrases)
-    # and don't start with common error/meta words.
-    _noise_prefixes = ("error", "sorry", "unable", "cannot", "invalid", "note:", "warning")
-    candidates = re.findall(r'"([^"]{5,200})"', text)
+    # fallback: extract quoted strings
+    return re.findall(r'"([^"]{5,200})"', text)
+
+
+
+
+# =============================================================================
+# VALIDATION LIBRARY — Code-level fixes (priorities 1-10)
+# =============================================================================
+import re as _vre
+
+# Priority 5: Abbreviation normalisation — long forms nobody types into ChatGPT
+_EXPAND_TO_SHORT = {
+    "Search Engine Optimization": "SEO",
+    "Business to Business": "B2B",
+    "Business-to-Business": "B2B",
+    "Business to Consumer": "B2C",
+    "Business-to-Consumer": "B2C",
+    "Application Programming Interface": "API",
+    "Large Language Model": "LLM",
+    "Natural Language Processing": "NLP",
+    "Customer Relationship Management": "CRM",
+    "Software as a Service": "SaaS",
+}
+
+def _normalise_abbr(text: str) -> str:
+    for long_form, short in _EXPAND_TO_SHORT.items():
+        text = _vre.sub(_vre.escape(long_form), short, text, flags=_vre.IGNORECASE)
+    return text
+
+# Priority 8: Topic filler word removal
+_FILLER = [
+    r'\bavailable\b', r'\boptions\b', r'\bofferings\b',
+    r'\bvarious\b', r'\bcomprehensive\b', r'\binnovative\b',
+    r'\bcutting-edge\b', r'\bstate-of-the-art\b', r'\bworld-class\b',
+]
+
+def _clean_topic(topic: str) -> str:
+    topic = _normalise_abbr(topic)
+    for pat in _FILLER:
+        topic = _vre.sub(pat, '', topic, flags=_vre.IGNORECASE)
+    return _vre.sub(r'\s+', ' ', topic).strip().strip(',').strip()
+
+# Priority 3: Grammar — "I am a/an" + singular noun
+_VOWELS = set('aeiouAEIOU')
+
+def _fix_article_grammar(text: str) -> str:
+    def _fix(m):
+        prefix  = m.group(1)   # "I am " or "I'm "
+        article = m.group(2)   # "a" or "an"
+        noun    = m.group(3)   # noun (possibly plural)
+        rest    = m.group(4)   # rest of string
+        # Singularise
+        if noun.endswith("ies") and len(noun) > 4:
+            noun = noun[:-3] + "y"
+        elif noun.endswith("ers") and not noun.endswith("eers"):
+            noun = noun[:-1]
+        elif noun.endswith("ants") or noun.endswith("ents"):
+            noun = noun[:-1]
+        elif noun.endswith("ors") and len(noun) > 4:
+            noun = noun[:-1]
+        elif noun.endswith("sts"):
+            noun = noun[:-1]
+        # Fix article
+        article = "an" if noun and noun[0] in _VOWELS else "a"
+        return prefix + article + " " + noun + rest
+    return _vre.sub(
+        r"(I(?:'m| am) )(a|an) ([A-Za-z]+)(.*)",
+        _fix, text, flags=_vre.IGNORECASE
+    )
+
+# Priority 7: Brand name capitalisation enforcement
+def _fix_brand_cap(text: str, brand_name: str) -> str:
+    if not brand_name:
+        return text
+    pat = _vre.compile(r'\b' + _vre.escape(brand_name) + r'\b', _vre.IGNORECASE)
+    return pat.sub(brand_name, text)
+
+# Priority 4: Business type vocabulary enforcement — wrong category word detection
+_AGENCY_WORDS   = {'agency','agencies','firm','firms','consultant','consultants'}
+_SOFTWARE_WORDS = {'software','tool','tools','platform','platforms','app','apps'}
+_TRAINING_WORDS = {'training','course','courses','bootcamp','certification'}
+
+def _has_category_violation(prompt: str, category_word: str) -> bool:
+    pl  = prompt.lower()
+    cw  = category_word.lower()
+    if any(w in cw for w in ['agency','service']):
+        return any(w in pl.split() for w in _SOFTWARE_WORDS)
+    if any(w in cw for w in ['software','tool','platform']):
+        return any(w in pl.split() for w in _AGENCY_WORDS)
+    return False
+
+# Priority 1: Structural duplication — first 6 words + semantic overlap
+def _has_structural_dupes(prompts: list) -> bool:
+    STOP = {'the','a','an','for','of','in','to','and','or','is',
+            'are','what','which','how','who','best','top','any','i','we'}
+    seen_start = set()
+    seen_full  = set()
+    for p in prompts:
+        pl    = p.lower().strip()
+        first6 = " ".join(pl.split()[:6])
+        if pl in seen_full or first6 in seen_start:
+            return True
+        seen_full.add(pl)
+        seen_start.add(first6)
+    # Semantic overlap check between all pairs
+    for i in range(len(prompts)):
+        for j in range(i+1, len(prompts)):
+            a = set(prompts[i].lower().split()) - STOP
+            b = set(prompts[j].lower().split()) - STOP
+            if a and b and len(a & b) / min(len(a), len(b)) > 0.80:
+                return True
+    return False
+
+# Priority 2: How-to prompt presence
+_HOWTO_STARTS = ['how do i','how can i','how does','how do companies',
+                 "what's the best way to",'what is the best way to']
+
+def _has_howto(prompts: list) -> bool:
+    return any(p.lower().strip().startswith(s) for p in prompts for s in _HOWTO_STARTS)
+
+# Priority 9: Topic coverage check
+def _uncovered_products(topics: list, products_list: list) -> list:
+    combined = " ".join(topics).lower()
     return [
-        c for c in candidates
-        if " " in c and not c.lower().startswith(_noise_prefixes)
+        p for p in products_list
+        if not any(w in combined for w in p.lower().split() if len(w) >= 4)
     ]
 
+# Master cleaner — apply all code-level fixes to a prompt
+def _clean_generated_prompt(p: str, brand_name: str, category_word: str) -> str:
+    p = _normalise_abbr(p)
+    p = _fix_article_grammar(p)
+    p = _fix_brand_cap(p, brand_name)
+    return p.strip()
 
 
 def fetch_brand_website(domain: str) -> str:
@@ -199,19 +323,12 @@ def fetch_brand_website(domain: str) -> str:
         "Accept-Language": "en-US,en;q=0.5",
     }
 
-    # Try multiple URL variants to maximize success rate.
-    # Only add www. variant if the URL doesn't already have it.
-    # Only add http:// variant if the domain doesn't respond on https
-    # (avoids adding www.www. for already-prefixed domains and wastes fewer requests).
+    # Try multiple URL variants to maximize success rate
     urls_to_try = [url]
     if not url.startswith("https://www."):
-        www_url = url.replace("https://", "https://www.", 1)
-        if www_url not in urls_to_try:
-            urls_to_try.append(www_url)
-    # http fallback only for domains that genuinely don't redirect to https
-    http_url = url.replace("https://", "http://", 1)
-    if http_url not in urls_to_try:
-        urls_to_try.append(http_url)
+        urls_to_try.append(url.replace("https://", "https://www.", 1))
+    if url.startswith("https://"):
+        urls_to_try.append(url.replace("https://", "http://", 1))
 
     html = ""
     for try_url in urls_to_try:
@@ -311,16 +428,11 @@ def resolve_brand_terms(brand_data: dict) -> dict:
         "Key features: " + key_features + "\n"
     )
 
-    import re as _re_terms
-    all_brand_text = brand_context + products + " " + key_features
-    # Only check terms that appear as standalone words (not substrings).
-    # IGNORECASE so "geo" in lowercase product text still matches "GEO" in the dict.
-    terms_to_check = {}
-    for term, meanings in AMBIGUOUS_TERMS.items():
-        # Match whole word only — "PR" must not match inside "prior" or "search"
-        pattern = _re_terms.compile(r'\b' + _re_terms.escape(term) + r'\b', _re_terms.IGNORECASE)
-        if pattern.search(all_brand_text):
-            terms_to_check[term] = meanings
+    all_brand_text = (brand_context + products + " " + key_features).upper()
+    terms_to_check = {
+        term: meanings for term, meanings in AMBIGUOUS_TERMS.items()
+        if term in all_brand_text
+    }
 
     if not terms_to_check:
         brand_data["_resolved_terms"] = {}
@@ -376,126 +488,272 @@ def build_term_glossary(resolved_terms: dict) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def generate_gap_analysis(brand_data: dict, all_results: list, scores: dict) -> str:
+    """
+    Generates authentic gap analysis based on actual AI responses from the tracking run.
+    Compares what competitors are being cited for vs what the client offers.
+    Returns a structured analysis string.
+    """
+    import json as _json
+
+    brand_name = brand_data.get("name", "")
+    website_text = brand_data.get("_website_text", "")
+    products = ", ".join(brand_data.get("products", []))
+    key_features = ", ".join(brand_data.get("key_features", []))
+
+    # Extract what ChatGPT actually said about competitors
+    competitor_mentions = {}
+    source_domains = set()
+    response_snippets = []
+
+    for r in all_results:
+        resp_text = r.get("response", "")
+        if resp_text and len(resp_text) > 50:
+            response_snippets.append(resp_text[:300])
+
+        brands = r.get("brands_detected", {}).get("all_brands", [])
+        for b in brands:
+            b_lower = b.lower()
+            if b_lower != brand_name.lower():
+                competitor_mentions[b] = competitor_mentions.get(b, 0) + 1
+
+        for s in r.get("linked_sites", []):
+            domain = s.get("domain", "")
+            if domain and brand_name.lower() not in domain.lower():
+                source_domains.add(domain)
+
+    # Top competitors by frequency
+    top_competitors = sorted(competitor_mentions.items(), key=lambda x: x[1], reverse=True)[:8]
+    overall_visibility = scores.get("overall_citation_share", 0)
+
+    # Build context for gap analysis
+    gap_context = (
+        "BRAND BEING ANALYZED:\n"
+        "Name: " + brand_name + "\n"
+        "What they offer: " + products + "\n"
+        "Key differentiators: " + key_features + "\n"
+    )
+    if website_text:
+        gap_context += "Website content:\n" + website_text[:1500] + "\n\n"
+
+    gap_context += (
+        "\nTRACKING RUN RESULTS:\n"
+        "AI Visibility Score: " + str(overall_visibility) + "%\n"
+        "Total prompts run: " + str(len(all_results)) + "\n\n"
+        "BRANDS APPEARING INSTEAD OF " + brand_name.upper() + ":\n"
+    )
+    for brand, count in top_competitors:
+        pct = round((count / len(all_results)) * 100)
+        gap_context += "- " + brand + ": appeared in " + str(pct) + "% of responses\n"
+
+    if source_domains:
+        gap_context += "\nSOURCE WEBSITES CHATGPT CITED (that do NOT include " + brand_name + "):\n"
+        for domain in list(source_domains)[:8]:
+            gap_context += "- " + domain + "\n"
+
+    if response_snippets:
+        gap_context += "\nSAMPLE AI RESPONSES (showing why competitors are recommended):\n"
+        for snippet in response_snippets[:3]:
+            gap_context += "---\n" + snippet + "\n"
+
+    gap_prompt = (
+        "You are an AI visibility consultant analyzing why a brand is not appearing in AI search results.\n\n"
+        + gap_context
+        + "\nBased on this data, identify exactly why " + brand_name + " is not being recommended "
+        "and what they need to do to appear.\n\n"
+        "Generate a gap analysis with these 5 sections:\n\n"
+        "1. VISIBILITY DIAGNOSIS\n"
+        "One paragraph explaining exactly why " + brand_name + " has " + str(overall_visibility) + "% visibility. "
+        "Be specific — reference the actual competitors appearing and what signals they have that " + brand_name + " lacks.\n\n"
+        "2. CONTENT GAPS (3 specific gaps)\n"
+        "What specific content does " + brand_name + " need to create to appear in AI responses? "
+        "Reference the actual queries where competitors appeared. Be specific — not 'publish more content' "
+        "but 'create a comparison page for [specific competitor] vs " + brand_name + " because ChatGPT cited [source] for this query'.\n\n"
+        "3. CITATION FOOTPRINT GAPS (3 specific gaps)\n"
+        "Which specific third-party sites cited competitors but not " + brand_name + "? "
+        "What does the brand need to do to get listed on those same sites?\n\n"
+        "4. POSITIONING GAPS (2 specific gaps)\n"
+        "What specific language or proof points do competing brands use that " + brand_name + " does not? "
+        "Reference actual response snippets from the tracking run above.\n\n"
+        "5. TOP 3 PRIORITY ACTIONS\n"
+        "The 3 highest-impact actions " + brand_name + " should take right now, in priority order. "
+        "Each must be specific, actionable, and directly tied to the data above.\n\n"
+        "Keep each section concise and evidence-based. No generic SEO advice. "
+        "Every recommendation must reference actual data from this tracking run."
+    )
+
+    try:
+        result = _call_ai_for_json(gap_prompt)
+        # This returns plain text not JSON
+        if result and len(result) > 100:
+            return result
+        return "Gap analysis could not be generated. Please try again."
+    except Exception as e:
+        return "Gap analysis error: " + str(e)
+
+
 def ai_generate_topics(brand_data: dict) -> list:
     """
-    Topic generation following strict priority order:
-    1. Products and Services — use exact phrases the user typed
-    2. Key Features — use as topic modifiers
-    3. Business Type — determines category word (tool/agency/training)
-    4. Website scan — gap-filler only, not primary source
+    Three-phase topic generation - universal, works for any business.
+    Phase 1: Extract brand anchors deterministically from user data
+    Phase 2: AI understands the business deeply
+    Phase 3: Generate topics grounded in real brand terminology
     """
     import json as _json
 
     business_type = brand_data.get("business_type", "")
-    products_list  = brand_data.get("products", [])
+    products_list = brand_data.get("products", [])
     customers_list = brand_data.get("customers", [])
-    features_list  = brand_data.get("key_features", [])
+    features_list = brand_data.get("key_features", [])
     competitors_list = brand_data.get("competitors", [])
-    domain     = brand_data.get("domain", "")
+    domain = brand_data.get("domain", "")
     brand_name = brand_data["name"]
-    country    = brand_data.get("country", "")
+    country = brand_data.get("country", "")
+    products = ", ".join(products_list)
+    customers = ", ".join(customers_list)
+    key_features = ", ".join(features_list)
 
     website_text = brand_data.get("_website_text", "")
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
-    # ── TERM RESOLUTION ───────────────────────────────────────────────────────
+    # ── TERM RESOLUTION (silent, runs once per session) ──────────────────
     resolved_terms = resolve_brand_terms(brand_data)
-    term_glossary  = build_term_glossary(resolved_terms)
+    term_glossary = build_term_glossary(resolved_terms)
 
-    # ── PRIORITY 3: Derive category word from business type ───────────────────
-    bt_lower = business_type.lower()
-    if any(w in bt_lower for w in ["training", "education", "bootcamp", "courses"]):
-        category_word    = "training"
-        category_options = "training, courses, programs, providers, companies"
-    elif any(w in bt_lower for w in ["agency", "service", "studio", "consultancy"]):
-        category_word    = "agency"
-        category_options = "agency, agencies, services, firm, company, provider"
-    elif any(w in bt_lower for w in ["saas", "software", "platform", "tool"]):
-        category_word    = "software"
-        category_options = "software, tool, platform, solution, product"
-    else:
-        category_word    = "provider"
-        category_options = "provider, company, solution, platform, service"
+    # ── PHASE 1: Extract brand anchors from user data (no AI needed) ─────────
+    # Finds specific terms the brand actually uses — product names, vendor names,
+    # certification names, proprietary tool names. These become mandatory in topics.
+    COMMON_WORDS = {
+        "best", "tool", "tools", "software", "platform", "service", "services",
+        "company", "agency", "firm", "provider", "solution", "product", "team",
+        "based", "using", "user", "users", "data", "work", "free", "easy",
+        "simple", "fast", "high", "real", "time", "open", "source", "access",
+        "cost", "price", "need", "help", "make", "build", "track", "manage",
+        "create", "search", "find", "save", "with", "that", "this", "from",
+        "your", "their", "have", "will", "been", "more", "most", "very",
+        "over", "also", "only", "like", "just", "into", "than", "some",
+        "each", "such", "when", "where", "which", "what", "across", "through",
+        "without", "within", "between", "focused", "driven", "leading", "expert",
+        "award", "winning", "years", "since", "first", "content", "marketing",
+        "digital", "online", "growth", "brand", "brands", "business", "businesses",
+        "client", "clients", "results", "report", "strategy", "consulting",
+        "management", "support", "global", "local", "enterprise", "scalable",
+    }
 
-    # ── PRIORITY 1: Extract exact product phrases from user input ─────────────
-    products_clean = [p.strip() for p in products_list if len(p.strip()) >= 3][:10]
+    brand_anchors = []
+    for item in products_list + features_list:
+        item_clean = item.strip()
+        words = item_clean.split()
+        specific = [w for w in words if w.lower() not in COMMON_WORDS and len(w) >= 3]
+        if len(words) >= 2 and len(specific) >= 1 and any(len(w) >= 5 for w in specific):
+            brand_anchors.append(item_clean)
+        elif len(words) == 1 and len(item_clean) >= 4 and item_clean.lower() not in COMMON_WORDS:
+            brand_anchors.append(item_clean)
 
-    # ── PRIORITY 2: Extract top differentiators ───────────────────────────────
-    features_clean = [f.strip() for f in features_list if len(f.strip()) >= 3][:6]
+    seen_lower = set()
+    unique_anchors = []
+    for a in sorted(brand_anchors, key=len, reverse=True):
+        if a.lower() not in seen_lower:
+            seen_lower.add(a.lower())
+            unique_anchors.append(a)
+    brand_anchors = unique_anchors[:10]
 
-    # ── PRIORITY 4: Website scan as gap-filler only ───────────────────────────
-    website_context = ""
+    # ── PHASE 2: AI understands the business deeply ───────────────────────────
+    buyer_insights = brand_data.get("_buyer_insights", [])
+    buyer_insights_text = ""
+    if buyer_insights:
+        buyer_insights_text = "\nDIRECT BUYER INSIGHTS FROM BRAND OWNER:\n"
+        for qa in buyer_insights:
+            buyer_insights_text += "Q: " + qa["question"] + "\nA: " + qa["answer"] + "\n\n"
+
+    raw_context = ""
     if website_text:
-        website_context = (
-            "\nWEBSITE CONTENT (use only to fill gaps not already in the form above):\n"
-            + website_text[:1500] + "\n"
-        )
-
-    # ── Internal summary — prevents category drift ────────────────────────────
-    internal_summary = (
-        "INTERNAL SUMMARY (use this as generation context):\n"
-        "This brand is a " + business_type + ".\n"
-        "Their specific offerings are: " + ", ".join(products_clean[:3]) + ".\n"
-        "Their strongest differentiators are: " + ", ".join(features_clean[:3]) + ".\n"
-        "Their primary buyers are: " + ", ".join(customers_list[:3]) + ".\n\n"
+        raw_context += "WEBSITE CONTENT:\n" + website_text[:2500] + "\n\n"
+    raw_context += (
+        "Brand: " + brand_name + "\n"
+        + "Business type: " + business_type + "\n"
+        + "Products/Services: " + products + "\n"
+        + "Target customers: " + customers + "\n"
+        + "Key differentiators: " + key_features + "\n"
+        + "Competitors: " + ", ".join(competitors_list) + "\n"
     )
 
-    country_topic = ""
-    if country and country.lower() not in ["global", "united states", ""]:
-        country_topic = "- Include 1 topic mentioning '" + country + "' for local relevance\n"
+    understanding_prompt = (
+        "Read this brand information and answer in JSON format.\n\n"
+        + term_glossary
+        + raw_context
+        + buyer_insights_text
+        + "\nAnswer about THIS specific brand:\n"
+        + '{\n'
+        + '  "what_business_does": "One specific sentence. Use the brand own terminology from website.",\n'
+        + '  "exact_buyer": "Job title, company type, and problem they need solved.",\n'
+        + '  "buyer_searches": ["5 exact phrases buyer types into ChatGPT. Use brand product names. Start with best/top/which/who/compare."],\n'
+        + '  "business_category": "Single word: agency OR software OR platform OR firm OR provider OR training company"\n'
+        + '}\n\n'
+        + "CRITICAL: Use actual product and vendor names from the website.\n"
+        + "WRONG: best GEO agency. RIGHT: best agency for Generative Engine Optimization using BlueprintIQ\n"
+        + "WRONG: cybersecurity training. RIGHT: best authorized Palo Alto Networks training company\n"
+        + "Respond ONLY with valid JSON. No markdown."
+    )
 
-    products_str  = "\n".join("- " + p for p in products_clean)
-    features_str  = "\n".join("- " + f for f in features_clean)
+    brand_understanding = {}
+    try:
+        raw_intel = _call_ai_for_json(understanding_prompt)
+        try:
+            brand_understanding = _json.loads(raw_intel)
+        except Exception:
+            parsed = _parse_json_list(raw_intel)
+            if parsed and isinstance(parsed[0], dict):
+                brand_understanding = parsed[0]
+    except Exception:
+        brand_understanding = {}
+
+    buyer_searches = brand_understanding.get("buyer_searches", [])
+    business_category = brand_understanding.get("business_category", "agency")
+    what_business_does = brand_understanding.get("what_business_does", "")
+    exact_buyer = brand_understanding.get("exact_buyer", "")
+
+    # ── PHASE 3: Generate topics grounded in brand anchors ────────────────────
+    country_note = ("User country: " + country + "\n") if country and country.lower() not in ["global", ""] else ""
+    country_topic_note = (
+        "- Include 1 topic with '" + country + "' for local search\n"
+        if country and country.lower() not in ["global", "united states", ""] else ""
+    )
+    anchor_list = "\n".join(("- " + a) for a in brand_anchors[:8]) if brand_anchors else "- (none extracted)"
+    buyer_search_list = "\n".join(("- " + s) for s in buyer_searches[:5]) if buyer_searches else ""
 
     topic_prompt = (
-        "You track brand visibility in AI tools like ChatGPT and Perplexity.\n\n"
+        "You track brand visibility across AI tools like ChatGPT and Perplexity.\n\n"
         + term_glossary
-        + internal_summary
-        + "PRIORITY 1 — PRODUCTS AND SERVICES (user typed these exactly — use their words):\n"
-        + products_str + "\n\n"
-        + "PRIORITY 2 — KEY DIFFERENTIATORS (use as topic modifiers):\n"
-        + features_str + "\n\n"
-        + "PRIORITY 3 — BUSINESS TYPE: " + business_type + "\n"
-        + "Category words to use: " + category_options + "\n"
-        + "NEVER use category words that contradict the business type.\n"
-        + "e.g. never write 'patent search firms' for a SaaS company — write 'patent search software'\n\n"
-        + website_context
-        + "\nGenerate 5 short specific topics a buyer types when searching for this brand's category.\n\n"
-        + "STRICT RULES:\n"
-        + "1. Use the EXACT phrases from PRIORITY 1 above — do not summarise into category names\n"
-        + "   If user typed 'patent search API' write a topic around 'patent search API'\n"
-        + "   If user typed 'LinkedIn ghostwriting' write a topic around 'LinkedIn ghostwriting'\n"
-        + "   If user typed 'Fortinet authorized partner' write a topic around 'Fortinet authorized partner'\n"
-        + "2. Combine product phrases with differentiator modifiers where natural\n"
-        + "   e.g. 'free AI patent search tool' (product: patent search + differentiator: free + AI)\n"
-        + "   e.g. 'open source patent search platform' (product: patent search + differentiator: open source)\n"
-        + "3. Every topic must use a category word matching PRIORITY 3 above\n"
-        + "4. Topics are SHORT — 3-7 words. No sentences.\n"
-        + "5. VARY endings — do not end all topics with the same word\n"
-        + "6. No qualifiers: no 'best', 'top', 'leading'\n"
-        + "7. No '" + brand_name + "' in any topic\n"
-        + "8. EXPAND abbreviated terms using TERM GLOSSARY — never abbreviate\n"
-        + country_topic
-        + "\nGOOD EXAMPLES for a free open-source patent search SaaS:\n"
-        + "- 'free AI patent search tool'\n"
-        + "- 'open source patent search platform'\n"
-        + "- 'patent search API for startups'\n"
-        + "- 'semantic prior art search software'\n"
-        + "- 'AI patent classification tool'\n\n"
-        + "BAD EXAMPLES for the same brand:\n"
-        + "- 'patent search services' (wrong category word — it is software not services)\n"
-        + "- 'prior art search firms' (wrong category word — it is software not firms)\n"
-        + "- 'patent research solutions' (vague — does not use specific product phrases)\n\n"
-        + "GOOD EXAMPLES for a B2B SaaS content agency:\n"
-        + "- 'B2B content marketing agency'\n"
-        + "- 'SaaS content marketing services'\n"
-        + "- 'LinkedIn ghostwriting for B2B'\n"
-        + "- 'Generative Engine Optimization agency for SaaS'\n"
-        + "- 'thought leadership content creation'\n\n"
-        + "For each topic include one sentence of buyer intent.\n"
-        + 'Respond ONLY with JSON: [{"topic": "...", "intent": "..."}, ...]\n'
-        + "No markdown."
+        + "BUSINESS CONTEXT:\n"
+        + "Brand: " + brand_name + "\n"
+        + "What they do: " + what_business_does + "\n"
+        + "Exact buyer: " + exact_buyer + "\n"
+        + "Business category: " + business_category + "\n"
+        + country_note
+        + "\nBRAND ANCHOR TERMS (at least 3 topics must include one of these):\n"
+        + anchor_list
+        + "\n\nBUYER SEARCH PHRASES (starting point for topics):\n"
+        + buyer_search_list
+        + "\n\nRAW BRAND DATA:\n"
+        + raw_context
+        + "\nGenerate 7 topics this exact buyer types into ChatGPT when ready to choose.\n\n"
+        + "MANDATORY RULES:\n"
+        + "1. At least 3 topics MUST include one of the BRAND ANCHOR TERMS above\n"
+        + "2. Start from BUYER SEARCH PHRASES then expand and vary them\n"
+        + "3. Every topic must make ChatGPT name specific brands in its answer\n"
+        + "4. Every topic needs a category word: " + business_category + ", agency, firm, service, software, platform\n"
+        + "5. No '" + brand_name + "' in any topic\n"
+        + "6. AVOID vague terms ChatGPT misinterprets:\n"
+        + "   BAD: 'GEO agency' alone (reads as Geographic). GOOD: 'best Generative Engine Optimization agency for SaaS'\n"
+        + "   BAD: 'cybersecurity training'. GOOD: 'best authorized Palo Alto Networks training company'\n"
+        + "7. Use real product names, vendor names, certification names from brand data above\n"
+        + "8. No educational or how-to topics\n"
+        + country_topic_note
+        + "\nFor each topic include one sentence of buyer intent.\n"
+        + 'Respond ONLY with JSON array: [{"topic": "...", "intent": "..."}, ...]\n'
+        + "No markdown, no explanation."
     )
 
     raw = _call_ai_for_json(topic_prompt)
@@ -506,7 +764,7 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     for item in parsed_raw:
         if isinstance(item, dict):
-            t      = item.get("topic", "").strip()
+            t = item.get("topic", "").strip()
             intent = item.get("intent", "").strip()
             if t:
                 topics.append(t)
@@ -518,23 +776,6 @@ def ai_generate_topics(brand_data: dict) -> list:
     if "brand_data" in st.session_state:
         st.session_state.brand_data["_topic_intents"] = topic_intents
 
-    # Post-generation: expand abbreviations (whole-word only)
-    import re as _re_expand
-    for abbr, expansion in (resolved_terms or {}).items():
-        pat = _re_expand.compile(r'\b' + _re_expand.escape(abbr) + r'\b', _re_expand.IGNORECASE)
-        topics = [pat.sub(expansion, t) for t in topics]
-
-    # Fix plural misspellings
-    import re as _re_tp
-    PLURAL_FIXES_T = {
-        r'\bagencys\b': 'agencies', r'\bcompanys\b': 'companies',
-        r'\bprovidors\b': 'providers', r'\bsoftwares\b': 'software',
-    }
-    def fix_tp(text):
-        for pat, rep in PLURAL_FIXES_T.items():
-            text = _re_tp.sub(pat, rep, text, flags=_re_tp.IGNORECASE)
-        return text
-
     bad_patterns = [
         "strategies", "tips", "how to", "examples", "guide", "tutorial",
         "best practices", "introduction", "overview", "explained",
@@ -543,17 +784,26 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     filtered = []
     for t in topics:
-        t = fix_tp(t.strip())
+        # Priority 8: remove filler words, normalise abbreviations
+        t = _clean_topic(t.strip())
         if not t or brand_lower in t.lower():
             continue
         if any(bp in t.lower() for bp in bad_patterns):
             continue
         filtered.append(t)
 
-    # Fallback: build directly from user's product phrases
+    # Priority 9: coverage check — ensure major products have a topic
+    products_for_coverage = [p.strip() for p in products_list if len(p.strip()) >= 3][:8]
+    uncovered = _uncovered_products(filtered, products_for_coverage)
+    for missing in uncovered[:2]:
+        fb = _clean_topic(missing + " " + category_word)
+        if brand_lower not in fb.lower() and fb not in filtered and len(filtered) < 5:
+            filtered.append(fb)
+
+    # Fallback: build from products if still too few
     if len(filtered) < 3:
-        for p in products_clean[:6]:
-            fallback = fix_tp(p + " " + category_word)
+        for p in products_for_coverage[:6]:
+            fallback = _clean_topic(p + " " + category_word)
             if brand_lower not in fallback.lower() and fallback not in filtered:
                 filtered.append(fallback)
             if len(filtered) >= 5:
@@ -564,579 +814,376 @@ def ai_generate_topics(brand_data: dict) -> list:
 
 
 def ai_generate_prompts(topic: str, brand_data: dict) -> list:
-    """
-    Prompt generation with:
-    - Fix 2a: Persona rotation — each prompt uses a different buyer from Target Customers
-    - Fix 2b: Differentiator inclusion — key features appear in prompts naturally
+    brand_name = brand_data["name"]
+    products = ", ".join(brand_data.get("products", []))
+    customers = ", ".join(brand_data.get("customers", []))
+    business_type = brand_data.get("business_type", "")
+    domain = brand_data.get("domain", "")
 
-    5-prompt structure per topic:
-    1. Bare topic keyword
-    2-3. Persona-based first-person prompts (different buyer each)
-    4. Persona-based with differentiator reference
-    5. Comparison or recommendation prompt
-    """
-    import json as _json
-
-    brand_name     = brand_data.get("name", "")
-    products_list  = brand_data.get("products", [])
-    customers_list = brand_data.get("customers", [])
-    features_list  = brand_data.get("key_features", [])
-    business_type  = brand_data.get("business_type", "")
-    competitors    = brand_data.get("competitors", [])
-    domain         = brand_data.get("domain", "")
-
+    # Reuse cached website text if already fetched, else fetch again
     website_text = brand_data.get("_website_text", "")
     if not website_text and domain:
         website_text = fetch_brand_website(domain)
 
+    # Reuse resolved terms from topic generation
     resolved_terms = brand_data.get("_resolved_terms", {})
-    term_glossary  = build_term_glossary(resolved_terms)
+    term_glossary = build_term_glossary(resolved_terms)
 
-    # ── Category word from business type ──────────────────────────────────────
-    bt_lower = business_type.lower()
-    if any(w in bt_lower for w in ["training", "education", "bootcamp"]):
-        category_word = "training provider"
-        avoid_word    = "NEVER use 'course' or 'tutorial' — ask for training companies\n"
-    elif any(w in bt_lower for w in ["agency", "service", "studio"]):
-        category_word = "agency"
-        avoid_word    = "NEVER use 'tool' or 'software' — this is a service not a product\n"
-    elif any(w in bt_lower for w in ["saas", "software", "platform"]):
-        category_word = "software"
-        avoid_word    = "NEVER use 'agency' or 'consultant' — this is software not a service\n"
+    # Build context block
+    if website_text:
+        context_block = (
+            "Website content (primary source of truth for what this brand does):\n"
+            + website_text[:1500]
+            + "\n\nForm data: " + products + " | Customers: " + customers
+        )
     else:
-        category_word = "provider"
-        avoid_word    = ""
+        context_block = (
+            "What they offer: " + products + "\n"
+            "Who buys from them: " + customers
+        )
 
-    brand_lower = brand_name.lower()
-
-    # ── Persona rotation — no repeats within same topic group ───────────────
-    # All customer types get equal representation across topics.
-    # Within a single topic, each of the 3 persona prompts (2,3,5) uses a
-    # DIFFERENT persona. If list has 6 types, no type repeats until all used.
-
-    # Step 1: Singularise each customer label before use
-    # e.g. "startups" → "startup founder", "patent attorneys" → "patent attorney"
-    SINGULAR_MAP = {
-        "startups": "startup founder",
-        "inventors": "inventor",
-        "researchers": "researcher",
-        "developers": "developer",
-        "attorneys": "patent attorney",
-        "patent attorneys": "patent attorney",
-        "ip professionals": "IP professional",
-        "professionals": "professional",
-        "engineers": "engineer",
-        "managers": "manager",
-        "founders": "founder",
-        "scientists": "scientist",
-        "lawyers": "lawyer",
-        "students": "student",
-        "teams": "team lead",
-        "companies": "company owner",
-        "businesses": "business owner",
-    }
-
-    def _ensure_singular(label):
-        label = label.strip()
-        label_lower = label.lower()
-        # Check exact match in map
-        if label_lower in SINGULAR_MAP:
-            return SINGULAR_MAP[label_lower]
-        # Check partial match
-        for plural, singular in SINGULAR_MAP.items():
-            if label_lower == plural or label_lower.endswith(" " + plural):
-                return singular
-        # Generic suffix rules
-        if label.endswith("ies") and len(label) > 4:
-            return label[:-3] + "y"
-        if label.endswith("ers") and not label.endswith("eers"):
-            return label[:-1]
-        if label.endswith("ants") or label.endswith("ents"):
-            return label[:-1]
-        if label.endswith("ors") and len(label) > 4:
-            return label[:-1]
-        if label.endswith("sts"):
-            return label[:-1]
-        return label
-
-    customers_raw   = [c.strip() for c in customers_list if c.strip()]
-    customers_clean = [_ensure_singular(c) for c in customers_raw]
-    if not customers_clean:
-        customers_clean = [
-            "startup founder", "researcher", "developer",
-            "IP professional", "inventor", "professional"
-        ]
-
-    # Deduplicate while preserving order
-    seen_p = set()
-    customers_unique = []
-    for c in customers_clean:
-        if c.lower() not in seen_p:
-            seen_p.add(c.lower())
-            customers_unique.append(c)
-    customers_clean = customers_unique
-
-    # Rotate starting point per topic so different topics use different personas first
-    topic_hash = sum(ord(c) for c in topic) % max(len(customers_clean), 1)
-    rotated = customers_clean[topic_hash:] + customers_clean[:topic_hash]
-
-    # Take first 3 UNIQUE personas for prompts 2, 3, and 5
-    # Never repeat within the same topic group
-    personas = []
-    for c in rotated:
-        if c not in personas:
-            personas.append(c)
-        if len(personas) >= 3:
-            break
-    # Pad with generic singular labels if list is very short
-    fallback_personas = [
-        "startup founder", "inventor", "researcher",
-        "developer", "IP professional", "manager"
-    ]
-    for fp in fallback_personas:
-        if len(personas) >= 3:
-            break
-        if fp not in personas:
-            personas.append(fp)
-
-    # ── Fix 2b: Top differentiators to include in prompts ────────────────────
-    features_clean = [f.strip() for f in features_list if f.strip()][:6]
-    top_features   = features_clean[:3] if features_clean else []
-
-    # ── Comparison setup ──────────────────────────────────────────────────────
+    # Priority 10: Competitors LOCKED to user input only
+    # Never pull competitor names from website scan or model knowledge
+    competitors = brand_data.get("competitors", [])
+    competitor_context = ""
     comp_for_comparison = []
     if competitors:
-        offset = topic_hash % max(len(competitors), 1)
-        rotated_comp = competitors[offset:] + competitors[:offset]
-        comp_for_comparison = rotated_comp[:1]
+        _topic_hash_c = sum(ord(c) for c in topic) % max(len(competitors), 1)
+        _rotated_comp = competitors[_topic_hash_c:] + competitors[:_topic_hash_c]
+        comp_for_comparison = _rotated_comp[:1]  # ONE competitor per topic, rotated
 
-    if comp_for_comparison:
+        competitor_context = (
+            "\nDIRECT COMPETITORS (from user input ONLY — never use other names): "
+            + ", ".join(competitors)
+            + "\nFor prompt 5, compare " + brand_name + " specifically against: "
+            + (comp_for_comparison[0] if comp_for_comparison else competitors[0])
+        )
+
+    # Get country for location-aware prompts
+    country = brand_data.get("country", "")
+
+    # Derive solution word dynamically from business type - works for any industry
+    bt_lower = business_type.lower()
+    if any(w in bt_lower for w in ["agency", "service", "studio", "consultancy"]):
+        solution_word = "agency or service provider"
+        avoid_line = "- NEVER use the word \'tool\' or \'software\' - this is a service not a tool\n"
+    elif any(w in bt_lower for w in ["saas", "software"]):
+        solution_word = "tool or software"
+        avoid_line = ""
+    elif any(w in bt_lower for w in ["ecommerce", "dtc"]):
+        solution_word = "platform or store"
+        avoid_line = ""
+    elif any(w in bt_lower for w in ["marketplace", "aggregator"]):
+        solution_word = "marketplace or platform"
+        avoid_line = ""
+    else:
+        solution_word = "product or service"
+        avoid_line = ""
+
+    # Priority 6: Persona rotation through full ICP list
+    # Each topic gets a unique persona from Target Customers — no repeats until all used
+    # Only uses personas from the user's actual input list — never invents roles
+    customers_list = brand_data.get("customers", [])
+    SINGULAR_MAP_P = {
+        "startups": "startup founder", "inventors": "inventor",
+        "researchers": "researcher", "developers": "developer",
+        "attorneys": "patent attorney", "patent attorneys": "patent attorney",
+        "ip professionals": "IP professional", "engineers": "engineer",
+        "managers": "corporate training manager", "founders": "founder",
+        "scientists": "scientist", "lawyers": "lawyer",
+        "companies": "company owner", "businesses": "business owner",
+        "cmos": "CMO", "marketing managers": "marketing manager",
+    }
+    def _make_singular(label):
+        label = label.strip()
+        ll = label.lower()
+        if ll in SINGULAR_MAP_P:
+            return SINGULAR_MAP_P[ll]
+        for plural, singular in SINGULAR_MAP_P.items():
+            if ll.endswith(" " + plural):
+                return label.rsplit(" ", 1)[0] + " " + singular.split()[-1]
+        if label.endswith("ies") and len(label) > 4: return label[:-3] + "y"
+        if label.endswith("ers") and not label.endswith("eers"): return label[:-1]
+        if label.endswith("ants") or label.endswith("ents"): return label[:-1]
+        if label.endswith("ors") and len(label) > 4: return label[:-1]
+        return label
+
+    _customers_singular = [_make_singular(c) for c in customers_list if c.strip()]
+    # Deduplicate
+    _seen_c = set()
+    _customers_unique = []
+    for c in _customers_singular:
+        if c.lower() not in _seen_c:
+            _seen_c.add(c.lower())
+            _customers_unique.append(c)
+    if not _customers_unique:
+        _customers_unique = ["startup founder", "researcher", "developer", "manager", "professional"]
+
+    # Rotate starting point per topic hash
+    _topic_hash = sum(ord(c) for c in topic) % max(len(_customers_unique), 1)
+    _rotated_customers = _customers_unique[_topic_hash:] + _customers_unique[:_topic_hash]
+    persona_role = _rotated_customers[0]  # Primary persona for this topic
+
+    # Country as system context not in prompt text
+    country_system = ""
+    country_suffix = ""
+    if country and country.lower() not in ["global", "united states", ""]:
+        country_system = f"\nUser location context: {country}. Tailor relevance to this market."
+        country_suffix = f" {country}"
+
+
+    # ── Priority 10: Comparison uses brand vs ONE locked competitor ──────────
+    # Rotates through the user's Direct Competitors list — never uses website data
+    if competitors and comp_for_comparison:
         comparison_line = (
-            "PROMPT 5 — COMPARISON:\n"
-            "Ask how " + brand_name + " compares to " + comp_for_comparison[0] + " for this use case.\n"
-            "This is the ONE prompt where you MAY use the brand name '" + brand_name + "'.\n"
-            "CORRECT: 'How does " + brand_name + " compare to " + comp_for_comparison[0] + " for [topic use case]?'\n"
-            "CORRECT: '" + brand_name + " vs " + comp_for_comparison[0] + " — which is better for [specific need]?'\n"
+            "5. COMPARISON: Compare " + brand_name + " against " + comp_for_comparison[0] + ".\\n"
+            "   MUST start with 'How does " + brand_name + "' or '" + brand_name + " vs'.\\n"
+            "   This is the ONLY prompt that may name " + brand_name + " directly.\\n"
+            "   CORRECT: 'How does " + brand_name + " compare to " + comp_for_comparison[0] + " for [topic]?'"
         )
     else:
         comparison_line = (
-            "PROMPT 5 — RECOMMENDATION:\n"
-            "Ask which " + category_word + " is best for the specific use case in the topic.\n"
-            "CORRECT: 'Which " + category_word + " would you recommend for [specific need from topic]?'\n"
+            "5. RECOMMENDATION: Which " + solution_word + " is best for [specific need from topic]?\\n"
+            "   CORRECT: 'Which " + solution_word + " would you recommend for [specific need from topic]?'"
         )
 
-    # ── Recommendation ask rotation ───────────────────────────────────────────
-    REC_ASKS = [
-        "What do you recommend?",
-        "What would you suggest?",
-        "Which one should I go with?",
-        "Any recommendations?",
-        "Who should I choose?",
-        "What's your pick?",
-        "Which would you choose?",
-        "Can you point me in the right direction?",
-    ]
-    rec_ask_1 = REC_ASKS[topic_hash % len(REC_ASKS)]
-    rec_ask_2 = REC_ASKS[(topic_hash + 2) % len(REC_ASKS)]
-    rec_ask_3 = REC_ASKS[(topic_hash + 4) % len(REC_ASKS)]
+    # ── Priority 4: Category word for business type ──────────────────────────
+    bt_lower_cw = business_type.lower()
+    if any(w in bt_lower_cw for w in ["training", "education", "bootcamp"]):
+        cat_word = "training provider"
+        cat_ban  = "NEVER use software or agency — this is a training company\n"
+    elif any(w in bt_lower_cw for w in ["agency", "service", "studio"]):
+        cat_word = "agency"
+        cat_ban  = "NEVER use software or tool — this is a service not software\n"
+    elif any(w in bt_lower_cw for w in ["saas", "software", "platform"]):
+        cat_word = "software"
+        cat_ban  = "NEVER use agency or firm — this is software not a service\n"
+    else:
+        cat_word = "provider"
+        cat_ban  = ""
 
-    # ── Context for the prompt ────────────────────────────────────────────────
-    context = (
-        "Products: " + ", ".join(products_list[:5]) + "\n"
-        + "Key differentiators: " + ", ".join(features_clean[:4]) + "\n"
-        + "Buyers: " + ", ".join(customers_clean[:5]) + "\n"
-    )
-
-    features_instruction = ""
-    if top_features:
-        features_instruction = (
-            "\nDIFFERENTIATOR INCLUSION RULE:\n"
-            "The brand's key differentiators are: " + ", ".join(top_features) + "\n"
-            "At least 1 of prompts 2-4 must naturally reference one of these differentiators.\n"
-            "Example: if differentiator is 'free', one persona should say 'I need a free solution'.\n"
-            "Example: if differentiator is 'authorized partner', one persona should say 'I need an authorized provider'.\n"
-            "Example: if differentiator is 'open source', one persona should mention 'open source'.\n"
-        )
-
-    # P3 starters must NEVER begin with "I" or "we" — those are reserved for P4.
-    # All openers are third-person or question-form to guarantee no collision with P4.
-    _p3_starters = [
-        'Are there any',
-        'Where can I find',
-        'Which companies offer',
-        'Who provides',
-        'Is there a',
-        'What companies specialize in',
-        'Which platforms offer',
-        'Are there tools that',
-        'Who offers',
-        'What software handles',
-    ]
-    # Defensive filter: strip any starter that begins with I/we (should never trigger)
-    _p3_starters = [s for s in _p3_starters if not s.lower().startswith(("i ", "i'", "we "))]
-    _p3_opener = _p3_starters[topic_hash % len(_p3_starters)]
-    # ── Fix 1: Split into system prompt (rules/persona) and user message (task) ──
-    # System role = GEO strategist identity + all rules
-    # User role   = brand context + specific topic to generate for
-    # This separation is critical — system prompt sets consistent behavior,
-    # user message provides the variable per-topic input.
-
-    system_prompt = (
-        "You are an expert GEO (Generative Engine Optimization) strategist who deeply "
-        "understands how real people search for products, services, software, and information "
-        "using AI tools like ChatGPT, Perplexity, and Gemini across every industry and niche.\n\n"
-
-        "You have worked with brands across B2B SaaS, agencies, training providers, legal tech, "
-        "healthcare, e-commerce, finance, education, manufacturing, and more. You understand that "
-        "buyer language, search intent, and question style vary significantly between industries. "
-        "A startup founder searching for patent search software types very differently than a "
-        "corporate training manager searching for Fortinet certification courses, who types very "
-        "differently than a SaaS CMO searching for a content marketing agency.\n\n"
-
-        "Your job is to generate 5 prompts per topic that sound exactly like how a real person "
-        "in that specific industry and buyer role would type into an AI tool. Study the brand "
-        "context carefully before generating anything. Every prompt must feel native to that "
-        "brand\'s world, not generic.\n\n"
-
-        "CRITICAL RULES — apply to every brand in every niche:\n"
-        "1. NEVER generate the same prompt twice within a topic. Each must differ in wording, structure, and intent.\n"
-        "2. NEVER start two prompts in the same topic with the same word or phrase.\n"
-        "3. Every prompt must contain at least one word or phrase from the topic name.\n"
-        "4. NEVER write prompts so generic they could apply to any brand or any topic.\n"
-        "5. GRAMMAR: always singular persona — 'I am a researcher' NEVER 'I am a researchers'\n"
-        "6. NEVER use year numbers.\n"
-        "7. NEVER abbreviate industry terms — always write the full phrase.\n"
-        "8. If any prompt looks similar to another — stop, rewrite from a completely different angle.\n"
-        "9. CATEGORY WORD RULE — critical: the brand context tells you the Solution type (e.g. software, tool, agency, training provider). "
-        "Use ONLY that exact category word in prompts 2 and 3. "
-        "NEVER substitute it with a different category. "
-        "If Solution type is 'software' — write 'software' or 'tool', NEVER 'agency' or 'agencies' or 'services'. "
-        "If Solution type is 'agency' — write 'agency', NEVER 'software' or 'tool'. "
-        "This rule overrides everything else.\n"
-        "10. PERSONA SEPARATION — P3 must NEVER start with 'I' or 'we'. "
-        "P3 is always third-person (Who provides / Which platforms / Are there tools). "
-        "Only P4 uses first-person 'I' or 'we'. Two prompts starting with 'I' in the same set is a failure.\n\n"
-
-        "OUTPUT FORMAT:\n"
-        "Return ONLY a JSON array of exactly 5 strings.\n"
-        "No markdown. No explanation. No numbering outside the JSON.\n"
-        "Example: [\"prompt1\", \"prompt2\", \"prompt3\", \"prompt4\", \"prompt5\"]"
-    )
-
-    user_message = (
-        "Generate exactly 5 prompts for the topic below. Follow the 5-prompt structure precisely.\n\n"
-
-        + (term_glossary if term_glossary else "")
-
+    prompt = (
+        "You are an expert GEO (Generative Engine Optimization) strategist who understands "
+        "how real buyers search across every industry and niche.\n\n"
+        + term_glossary
         + "BRAND CONTEXT:\n"
-        + "Business type: " + business_type + "\n"
-        + "Products/Services: " + ", ".join(products_list[:6]) + "\n"
-        + "Target customers: " + ", ".join(customers_clean[:5]) + "\n"
-        + "Key differentiators: " + ", ".join(features_clean[:4]) + "\n"
-        + "Solution type: " + category_word + "\n"
-        + (avoid_word if avoid_word else "")
-        + "\nTOPIC: \"" + topic + "\"\n"
-        + "Persona for prompt 4: " + personas[0] + " (singular — never pluralise)\n\n"
-
-        + "5-PROMPT STRUCTURE — follow exactly, no deviation:\n\n"
-
-        + "PROMPT 1 — PLAIN KEYWORD:\n"
-        + "Copy the topic phrase exactly as written: '" + topic + "'\n\n"
-
-        + "PROMPT 2 — must start with WHO or WHICH (best is banned):\n"
-        + "MUST begin with Who or Which. No other opener allowed. Never use best.\n"
-        + "No persona. No first person. THIRD PERSON ONLY.\n"
-        + "CATEGORY WORD: use '" + category_word + "' — NEVER substitute with agency/agencies/services/firms if the solution type is not an agency.\n"
-        + "CORRECT: Who provides " + category_word + "s for [topic use case]?\n"
-        + "CORRECT: Which " + category_word + "s handle [topic] well?\n"
-        + "WRONG: 'Which agencies offer...' when solution type is " + category_word + " — agencies is BANNED here.\n"
-        + "WRONG: best — completely banned from this prompt.\n\n"
-
-        + "PROMPT 3 — must start with '" + _p3_opener + "' (best is banned, I/we banned):\n"
-        + "MUST begin with exactly: " + _p3_opener + ". No other opener.\n"
-        + "THIRD PERSON ONLY — absolutely no 'I' or 'we'. P4 owns first person.\n"
-        + "CATEGORY WORD: use '" + category_word + "' — same rule as P2.\n"
-        + "CORRECT: " + _p3_opener + " " + category_word + "s that handle [topic]?\n"
-        + "WRONG: 'I need...' or 'We are...' — first person is BANNED in P3.\n"
-        + "WRONG: best — banned in prompt 3.\n\n"
-
-        + "PROMPT 4 — must start with I or we (best banned):\n"
-        + "MUST begin with I or we. No other opener. THIS IS THE ONLY FIRST-PERSON PROMPT.\n"
-        + "Persona: " + personas[0] + " singular only.\n"
-        + "Short casual. How this buyer actually types.\n"
-        + "Reference a differentiator: " + ", ".join(top_features[:2] if top_features else [category_word]) + "\n"
-        + "CORRECT: I'm a " + personas[0] + " and I need [differentiator] for [topic]. Any suggestions?\n"
-        + "WRONG: starts with best. WRONG: same persona or same opening as P3.\n\n"
-
-        + "PROMPT 5 — must start with How does " + brand_name + " or " + brand_name + " vs:\n"
-        + "Only prompt allowed to name " + brand_name + " directly.\n"
-        + "Compare against " + (comp_for_comparison[0] if comp_for_comparison else "a named competitor") + ".\n"
-        + "CORRECT: How does " + brand_name + " compare to " + (comp_for_comparison[0] if comp_for_comparison else "alternatives") + " for [topic]?\n\n"
-
-        + "MANDATORY STARTERS — enforced strictly:\n"
-        + "Prompt 1: bare topic\n"
-        + "Prompt 2: Who OR Which — use category word '" + category_word + "', never 'agencies' or wrong type\n"
-        + "Prompt 3: " + _p3_opener + " — THIRD PERSON ONLY, never I/we\n"
-        + "Prompt 4: I OR we — ONLY first-person prompt in the set, persona: " + personas[0] + "\n"
-        + "Prompt 5: How does " + brand_name + " OR " + brand_name + " vs\n"
-        + "BEST is banned from prompts 2, 3, and 4.\n"
-        + "No two prompts start with the same word.\n"
-        + "P3 is NEVER first person. P4 is the ONLY first person prompt.\n"
-        + "Category word in P2 and P3 is always '" + category_word + "' — no substitutions.\n"
-        + "Return ONLY the JSON array."
+        "Business type: " + business_type + "\n"
+        "Solution type: " + cat_word + "\n"
+        + cat_ban
+        + "Context: " + context_block + "\n"
+        + competitor_context
+        + country_system + "\n\n"
+        "GENERATE EXACTLY 5 PROMPTS for TOPIC: \"" + topic + "\"\n\n"
+        "PROMPT 1 — DIRECT SEARCH:\n"
+        "The exact topic phrase as typed. Nothing added. No question mark.\n"
+        "Output: '" + topic + "'\n\n"
+        "PROMPT 2 — WHO/WHICH QUESTION (third person, no 'best', no 'I'):\n"
+        "MUST start with 'Who' or 'Which'. Never 'best'. Never 'I' or 'we'.\n"
+        "Use category word: " + cat_word + ". " + cat_ban +
+        "CORRECT: 'Who provides reliable " + cat_word + "s for [topic use case]?'\n"
+        "CORRECT: 'Which " + cat_word + "s handle [topic]?'\n"
+        "WRONG: 'best...' or 'What\'s the best...' or 'Which agencies...' if " + cat_word + " is software\n\n"
+        "PROMPT 3 — HOW-TO (neutral, no persona, no 'I'):\n"
+        "MUST start with 'How do I' OR 'How does' OR 'What is the best way to' OR 'How can I'.\n"
+        "Process or use-case focused. Never 'best' at the start.\n"
+        "CORRECT: 'How do I find a " + cat_word + " for [topic]?'\n"
+        "CORRECT: 'What is the best way to [use case from topic]?'\n\n"
+        "PROMPT 4 — PERSONA (first person, starts with I or we):\n"
+        "MUST start with 'I' or 'we'. This is the ONLY first-person prompt.\n"
+        "Persona: " + persona_role + " — singular. Never pluralise.\n"
+        "Short and casual. References a key differentiator.\n"
+        "GRAMMAR: 'I am a " + persona_role + "' NEVER 'I am a " + persona_role + "s'\n"
+        "Ends with a recommendation ask.\n"
+        "CORRECT: 'I am a " + persona_role + " and I need [feature] for [topic]. What do you recommend?'\n\n"
+        + comparison_line + "\n\n"
+        "ABSOLUTE RULES:\n"
+        "1. Prompts 1-4: NEVER mention '" + brand_name + "'\n"
+        "2. Prompt 5 ONLY may name '" + brand_name + "'\n"
+        "3. 'best' is BANNED from prompts 2, 3, and 4\n"
+        "4. No two prompts start with the same word\n"
+        "5. Prompt 2 and 3 are THIRD PERSON — never 'I' or 'we'\n"
+        "6. Prompt 4 is the ONLY first-person prompt\n"
+        "7. Every prompt contains at least one word from: '" + topic + "'\n"
+        "8. No year numbers. No country names in prompt text\n"
+        "9. Singular grammar: 'I am a researcher' NEVER 'I am a researchers'\n"
+        "10. If any two prompts look similar — rewrite one from a completely different angle\n"
+        "\nReturn ONLY a JSON array of exactly 5 strings. No markdown."
     )
+    import re as _re
+    year_pattern = _re.compile(r"\b(20[0-9]{2})\b")
+    brand_lower = brand_name.lower()
+    topic_lower = topic.lower().strip()
 
-    import re as _re_year
-    year_pattern = _re_year.compile(r'\b(20[0-9]{2})\b')
+    # Universal structural validator - works for any niche, any industry
+    # A prompt is GOOD if it will force ChatGPT to name specific brands
+    # A prompt is BAD if ChatGPT will respond with generic advice, tools, or nothing
 
+    # Trigger words that force brand/agency citations in any niche
     CITATION_TRIGGERS = [
-        "recommend", "suggest", "which", "best", "top", "leading",
+        "recommend", "suggest", "which", "what's the best", "who should",
         "compare", "vs", "versus", "alternative", "alternatives",
-        "agency", "agencies", "firm", "firms", "company", "companies",
-        "tool", "tools", "software", "platform", "provider", "providers",
-        "who do you", "any recommendations", "what do you", "which one",
-        "who offers", "who makes", "what would you", "what's your pick",
-        "i am a", "i'm a", "i need",
-        # Prompt 2 starters — casual community recommendation
-        "can someone recommend", "which companies provide", "who offers",
-        # Prompt 3 starters — how-to and informational
-        "what is the best way to", "how do i", "which tools offer",
-        "which software offer", "which platforms offer", "which agencies offer",
+        "top", "best", "leading", "agency", "agencies", "firm", "firms",
+        "company", "companies", "tool", "tools", "software", "platform",
+        "service provider", "vendor", "who do you", "any suggestions",
+        "what do you", "which one", "who offers"
     ]
+
+    # Words that indicate a statement (not a question) with no brand ask
     STATEMENT_SIGNALS = [
         "how to", "what is", "what are the benefits", "what does",
         "explain", "guide", "tutorial", "tips for", "ways to",
-        "understanding", "introduction to", "overview of",
-        "why is", "when should", "how does", "what makes",
-        "how can i improve", "how do i", "what should i look for",
-        "what criteria", "key features of", "what factors",
+        "understanding", "introduction to", "overview of", "learn",
+        "difference between", "why is", "when should", "how does",
+        "what makes", "how can i improve", "how do i"
     ]
-
-    PLURAL_FIXES_P = {
-        r'\bagencys\b': 'agencies', r'\bcompanys\b': 'companies',
-        r'\bprovidors\b': 'providers', r'\bsoftwares\b': 'software',
-        r'\bsolution s\b': 'solutions',
-    }
-    import re as _re_plural
-
-    def fix_plurals(text):
-        for pat, rep in PLURAL_FIXES_P.items():
-            text = _re_plural.sub(pat, rep, text, flags=_re_plural.IGNORECASE)
-        return text
 
     def is_citation_producing(p):
+        """
+        Returns True if this prompt will force ChatGPT to name specific brands.
+        Universal logic - works for any industry, any niche.
+        """
         pl = p.lower().strip()
-        has_trigger = any(t in pl for t in CITATION_TRIGGERS)
-        is_informational = any(s in pl for s in STATEMENT_SIGNALS)
+
+        # Rule 1: Must have at least one citation trigger
+        has_trigger = any(trigger in pl for trigger in CITATION_TRIGGERS)
+
+        # Rule 2: Must NOT be a pure knowledge/information question
+        is_informational = any(signal in pl for signal in STATEMENT_SIGNALS)
+
+        # Rule 3: Persona prompts must end with a recommendation ask
         is_persona = pl.startswith("i ") or pl.startswith("i'm") or pl.startswith("i am")
         if is_persona:
-            return any(ask in pl for ask in [
-                "recommend", "suggest", "what do you", "any recommendation",
-                "who should", "which one", "what would", "what's your"
-            ])
+            has_ask = any(ask in pl for ask in ["recommend", "suggest", "what do you", "any suggestions", "who should"])
+            return has_ask
+
+        # Rule 4: Short noun phrases without triggers are bad (e.g. "bottom-funnel content providers")
+        words = pl.split()
+        if len(words) <= 5 and not has_trigger and "?" not in pl:
+            return False
+
         return has_trigger and not is_informational
 
-    def _too_similar(a, b):
-        a_words = set(a.lower().split())
-        b_words = set(b.lower().split())
-        if not a_words or not b_words:
-            return False
-        overlap = len(a_words & b_words) / min(len(a_words), len(b_words))
-        return overlap > 0.85
+    def is_bad_prompt(p):
+        """Returns True if this prompt should be rejected and regenerated."""
+        return not is_citation_producing(p)
 
-    def _is_acceptable(p, existing):
-        if not p or len(p.strip()) < 5:
-            return False
-        if brand_lower in p.lower() and "vs" not in p.lower() and "compare" not in p.lower():
-            return False
-        if any(_too_similar(p, e) for e in existing):
-            return False
-        return True
+    def process_raw(raw_prompts):
+        """Clean, filter, and validate a list of raw prompts using validation library."""
+        cleaned = []
+        for p in raw_prompts:
+            p = p.strip()
+            if not p:
+                continue
+            # Priority 5: normalise abbreviations (B2B, SEO etc)
+            p = _normalise_abbr(p)
+            # Strip year numbers
+            p = year_pattern.sub("", p).strip()
+            p = " ".join(p.split())
+            # Priority 3: fix article grammar (I am a/an + singular)
+            p = _fix_article_grammar(p)
+            # Priority 7: enforce brand name capitalisation
+            p = _fix_brand_cap(p, brand_name)
+            # Skip if contains brand name in prompts 1-4
+            if brand_lower in p.lower() and "vs" not in p.lower() and "compare" not in p.lower():
+                continue
+            # Skip exact duplicates of topic
+            if p.lower() == topic_lower:
+                continue
+            # Skip duplicates already in list
+            if p.lower() in [x.lower() for x in cleaned]:
+                continue
+            # Priority 4: reject wrong category word
+            if hasattr(locals(), "cat_word") and _has_category_violation(p, cat_word):
+                continue
+            # Skip prompts that will produce bad results
+            if is_bad_prompt(p):
+                continue
+            cleaned.append(p)
+        return cleaned
 
-    def _clean(p):
-        p = year_pattern.sub("", p).strip()
-        p = fix_plurals(p)
+    # First attempt — uses system/user split + temperature 0.8
+    raw = _call_ai_for_prompts(
+        "You are an expert GEO strategist generating search prompts. Follow all rules exactly.",
+        prompt
+    )
+    prompts = _parse_json_list(raw)
+    result = [topic] + process_raw(prompts)
 
-        def _singularise(w):
-            if w.endswith("ies") and len(w) > 4: return w[:-3] + "y"
-            if w.endswith("ers") and not w.endswith("eers"): return w[:-1]
-            if w.endswith("ants") or w.endswith("ents"): return w[:-1]
-            if w.endswith("ors") and len(w) > 4: return w[:-1]
-            if w.endswith("sts"): return w[:-1]
-            return w
+    # Add country variant if needed and not US
+    if country_suffix and len(result) < 5:
+        location_prompt = topic + country_suffix
+        if location_prompt.lower() not in [r.lower() for r in result]:
+            result.append(location_prompt)
 
-        def _fix_persona(text):
-            words = text.split()
-            result = []
-            for i, w in enumerate(words):
-                if (i >= 3
-                        and words[i-3].lower() == "i"
-                        and words[i-2].lower() == "am"
-                        and words[i-1].lower() in ("a", "an")):
-                    w = _singularise(w)
-                elif (i >= 4
-                      and words[i-4].lower() == "i"
-                      and words[i-3].lower() == "am"
-                      and words[i-2].lower() in ("a", "an")):
-                    w = _singularise(w)
-                result.append(w)
-            return " ".join(result)
-
-        p = _fix_persona(p)
-        return p
-    # Generate prompts
-    raw_prompts = _call_ai_for_prompts(system_prompt, user_message)
-    parsed = _parse_json_list(raw_prompts)
-    generated = [_clean(p) for p in parsed if isinstance(p, str) and p.strip()]
-
-    # Retry once if too few valid prompts
-    if len(generated) < 4:
-        raw2    = _call_ai_for_prompts(system_prompt, user_message)
-        parsed2 = _parse_json_list(raw2)
-        for p in parsed2:
-            if isinstance(p, str) and p.strip():
-                generated.append(_clean(p))
-
-    # Bare topic always first
-    topic_as_prompt = topic.strip()
-    result = [topic_as_prompt]
-
-    for p in generated:
-        if _is_acceptable(p, result):
-            result.append(p)
-        if len(result) >= 5:
-            break
-
-    # Guaranteed fallbacks — natural, GEO-safe (no banned words like "best" or "top rated")
-    _cw = category_word
-    _buyer0 = personas[0] if personas else "professional"
-    _buyer1 = personas[1] if len(personas) > 1 else "manager"
-    guaranteed = [
-        "I am a " + _buyer0 + " and I need " + topic + ". " + rec_ask_1,
-        "I am a " + _buyer1 + " looking for " + topic + ". " + rec_ask_2,
-        "which " + _cw + " handles " + topic + " well?",
-        "who provides " + topic + " for " + (_buyer0.split()[0] if _buyer0 else "teams") + "?",
-        "which " + _cw + "s specialize in " + topic + "?",
-        "recommended " + topic + " for " + (_buyer0.split()[0] if _buyer0 else "teams"),
-    ]
-    for fb in guaranteed:
-        if len(result) >= 5:
-            break
-        fb = _clean(fb)
-        if _is_acceptable(fb, result):
-            result.append(fb)
-
-    # Hard pad — should never reach here, but ensures exactly 5 prompts are returned.
-    # Uses GEO-safe phrasing (no banned words like "best").
-    _pad_idx = 0
-    _pad_templates = [
-        "which " + category_word + " is right for " + topic + "?",
-        "who offers " + topic + "?",
-        "I need " + topic + " — any suggestions?",
-        "where can I find " + topic + "?",
-        "what " + category_word + " covers " + topic + "?",
-    ]
-    while len(result) < 5:
-        result.append(_pad_templates[_pad_idx % len(_pad_templates)])
-        _pad_idx += 1
-
-    result = result[:5]
-
-    # ── Fix 3: Duplicate validation — auto-regenerate if duplicates found ─────
-    # Check for identical prompts or prompts starting with the same 4 words.
-    # If found, regenerate once before returning. Never show duplicates to user.
-    def _has_duplicates(prompts):
-        """
-        Returns True if any two prompts are too similar.
-        Checks:
-        1. Identical prompts
-        2. Same first 4 words
-        3. Prompt 2-5 contains 70%+ of the words from prompt 1 (topic echo)
-        """
-        if not prompts:
-            return False
-        seen_full  = set()
-        seen_start = set()
-
-        # Get core words from prompt 1 (the bare topic) for echo detection
-        topic_words = set(prompts[0].lower().split()) if prompts else set()
-        STOP_WORDS  = {"the","a","an","for","of","in","to","and","or","is","are",
-                       "what","which","how","who","best","top","good","some","any"}
-        topic_core  = topic_words - STOP_WORDS
-
-        # Seed with prompt[0] so any later identical prompt is correctly caught
-        p0_lower = prompts[0].lower().strip()
-        seen_full.add(p0_lower)
-        seen_start.add(" ".join(p0_lower.split()[:4]))
-
-        for p in prompts[1:]:
-            p_lower = p.lower().strip()
-            first4  = " ".join(p_lower.split()[:4])
-            p_words = set(p_lower.split()) - STOP_WORDS
-
-            # Check identical
-            if p_lower in seen_full:
-                return True
-            # Check same start
-            if first4 in seen_start:
-                return True
-            # Check topic echo — prompt is just the topic with wrapper words added
-            if topic_core and len(topic_core) >= 2:
-                overlap = len(p_words & topic_core) / len(topic_core)
-                if overlap >= 0.75:
-                    # Only flag if the prompt is short (not a long detailed prompt)
-                    if len(p_lower.split()) <= len(prompts[0].split()) + 5:
-                        return True
-
-            seen_full.add(p_lower)
-            seen_start.add(first4)
-        return False
-
-    if _has_duplicates(result):
-        # Regenerate with a slightly different temperature signal in the message
-        regen_message = user_message + (
-            "\n\nIMPORTANT: The previous generation had duplicate prompts. "
-            "Each of the 5 prompts must be completely different in wording and structure. "
-            "Start each prompt with a different word. No two prompts may be similar."
+    # If still under 5, regenerate and fill gaps - up to 2 extra attempts
+    attempts = 0
+    while len(result) < 5 and attempts < 2:
+        attempts += 1
+        retry_prompt = (
+            prompt +
+            f"\n\nIMPORTANT: The previous response was not enough. "
+            f"Generate 4 MORE prompts that are DIFFERENT from these already generated:\n" +
+            "\n".join(f"- {r}" for r in result)
         )
         try:
-            raw_regen   = _call_ai_for_prompts(system_prompt, regen_message)
-            parsed_regen = _parse_json_list(raw_regen)
-            regen_clean  = [_clean(p) for p in parsed_regen if isinstance(p, str) and p.strip()]
-
-            regen_result = [topic.strip()]
-            for p in regen_clean:
-                if _is_acceptable(p, regen_result):
-                    regen_result.append(p)
-                if len(regen_result) >= 5:
+            raw2 = _call_ai_for_prompts(prompt, "Regenerate. Previous had issues. Make all 5 prompts structurally different.")
+            extra = _parse_json_list(raw2)
+            new_clean = process_raw(extra)
+            # Add only what we still need
+            for p in new_clean:
+                if p.lower() not in [r.lower() for r in result]:
+                    result.append(p)
+                if len(result) >= 5:
                     break
-
-            # Only use regen if it is actually better (fewer duplicates)
-            if not _has_duplicates(regen_result) or len(regen_result) >= len(result):
-                _rpad = 0
-                while len(regen_result) < 5:
-                    regen_result.append(_pad_templates[_rpad % len(_pad_templates)])
-                    _rpad += 1
-                result = regen_result[:5]
         except Exception:
-            pass  # Keep original result if regen fails
+            break
 
-    return result
+    # Priority 1: Structural duplicate check — reject if any two share first 6 words
+    if _has_structural_dupes(result):
+        try:
+            raw_regen = _call_ai_for_prompts(
+                "You are an expert GEO strategist. Generate 5 completely different prompts.",
+                prompt + "\n\nPREVIOUS GENERATION HAD DUPLICATE PROMPTS. "
+                "Make every prompt different in opening word AND intent. "
+                "No two prompts may start with the same word."
+            )
+            regen = _parse_json_list(raw_regen)
+            regen_clean = process_raw(regen)
+            if regen_clean and not _has_structural_dupes([topic] + regen_clean):
+                result = ([topic] + regen_clean)[:5]
+        except Exception:
+            pass
+
+    # Priority 2: Ensure how-to prompt exists
+    if not _has_howto(result):
+        howto = "How do I find a " + solution_word + " for " + topic + "?"
+        howto = _fix_brand_cap(_normalise_abbr(howto), brand_name)
+        if len(result) < 5:
+            result.append(howto)
+        else:
+            result[-1] = howto
+
+    return result[:5]
 
 
-
+# Common English words falsely detected as brand names - filter these out
 BRAND_FALSE_POSITIVES = {
-    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "as", "is", "it", "its", "this", "that",
-    "are", "was", "be", "has", "have", "had", "do", "does", "did", "not",
-    "no", "yes", "so", "we", "us", "our", "you", "your", "they", "their",
-    "he", "she", "his", "her", "i", "my", "me", "up", "out", "if", "then",
-    "than", "more", "most", "also", "just", "can", "will", "may", "new",
-    "top", "best", "free", "data", "time", "work", "use", "used", "get",
-    "set", "go", "see", "say", "type", "list", "note", "via", "key",
-    "pro", "api", "app", "web", "net", "inc", "llc", "ltd", "co",
+    "relevance", "influence", "impact", "reach", "clarity", "signal",
+    "momentum", "velocity", "foundation", "element", "essence", "origin",
+    "focus", "vision", "mission", "purpose", "strategy", "content",
+    "agency", "studio", "digital", "creative", "media", "marketing",
+    "growth", "scale", "pipeline", "revenue", "performance", "results",
+    "insights", "analytics", "data", "intelligence", "solutions", "services",
+    "platform", "engine", "framework", "system", "network", "hub",
+    "monday", "notion", "canvas", "spectrum", "horizon", "zenith",
+    "apex", "summit", "peak", "core", "pulse", "spark", "flow",
+    "bridge", "link", "connect", "sync", "align", "engage",
+    "here", "there", "this", "that", "these", "those",
+    "first", "second", "third", "next", "last", "new", "old",
+    "best", "top", "great", "good", "better", "well", "more",
+    "also", "just", "only", "even", "still", "already", "yet",
+    "however", "therefore", "because", "although", "unless", "whether",
 }
-
 
 def is_false_positive_brand(name: str) -> bool:
     """Returns True if this name is likely a false positive, not a real brand."""
@@ -1555,13 +1602,24 @@ elif st.session_state.step == 2:
     # Auto-generate if not done yet
     if not st.session_state.topics:
 
-        # ── Step 1: Fetch website content ────────────────────────────────────
+        # ── Step 1: Show iframe preview + fetch website in parallel ──────────
         domain = bd.get("domain", "")
+
+        # Build the full URL for iframe display
         iframe_url = domain if domain.startswith("http") else f"https://{domain}"
 
-        st.markdown("#### 🌐 Reading your website...")
-        st.caption(f"Fetching content from: **{iframe_url}**")
+        # Show the website in an iframe so the user can see we are visiting it
+        st.markdown("#### 🌐 Visiting your website...")
+        st.caption(f"We are reading: **{iframe_url}**")
 
+        # Embed the actual website in an iframe
+        st.components.v1.iframe(
+            src=iframe_url,
+            height=320,
+            scrolling=True
+        )
+
+        # Now fetch the content in background
         with st.spinner("📖 Reading and extracting content from your website..."):
             if "_website_text" not in st.session_state.brand_data:
                 website_text = fetch_brand_website(domain)
@@ -2050,7 +2108,7 @@ elif st.session_state.step == 4:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Overall Citation Share", f"{scores['overall_citation_share']}%")
             c2.metric("Total Mentions", f"{scores['total_mentions']} / {scores['total_queries_run']}")
-            c3.metric("Avg Position", "N/A", help="Position tracking removed — LLM position detection was unreliable")
+            c3.metric("Position Score", f"{scores['position_score_pct']}%")
             c4.metric("Topics Tracked", len(st.session_state.selected_topics))
 
             # ── Competitor benchmark ──────────────────────────────────────
@@ -2218,7 +2276,10 @@ elif st.session_state.step == 4:
                                 st.markdown(f"**{r['tool']}**")
                                 mentioned = r["brands_detected"]["target_mentioned"]
                                 context = r["brands_detected"]["target_context"]
+                                position = r["brands_detected"]["target_position"]
+
                                 # Final safety check: verify brand actually in response text
+                                # Catches any LLM hallucination from brand_detector
                                 import re as _re_check
                                 _resp_text = r.get("response", "")
                                 _brand_in_text = bool(_re_check.search(
@@ -2226,10 +2287,10 @@ elif st.session_state.step == 4:
                                     _resp_text, _re_check.IGNORECASE
                                 ))
                                 if mentioned and not _brand_in_text:
-                                    mentioned = False
+                                    mentioned = False  # Override false positive
 
                                 if mentioned:
-                                    st.success(f"✅ {brand_name} appears in this response | Context: {context}")
+                                    st.success(f"Brand mentioned | Context: {context} | Position: #{position}")
                                 else:
                                     st.warning("Brand not mentioned")
 
@@ -2284,6 +2345,33 @@ elif st.session_state.step == 4:
                                     else:
                                         st.caption("No response recorded.")
 
+            # ── Competitor ranking - 3 dynamic categories ───────────────
+            st.subheader("Brands Detected in AI Responses")
+            st.caption("Brands are automatically classified at runtime by AI — no hardcoding, works for any industry.")
+
+            real_competitors = scores.get("real_competitors", [])
+            dominant_platforms = scores.get("dominant_platforms", [])
+            government_bodies = scores.get("government_bodies", [])
+            total_q = scores["total_queries_run"]
+
+            # ── Competitor visibility (no tabs, clean table) ──────────────
+            user_competitors = bd.get("competitors", [])
+            detected_names_map = {b.lower(): c for b, c in real_competitors}
+            comp_rows = [{"Brand": f"🎯 {brand_name} (You)", "AI Mentions": scores["total_mentions"],
+                          "Visibility": f"{scores['overall_citation_share']}%", "Status": "Your Brand"}]
+            for comp in user_competitors:
+                mentions = detected_names_map.get(comp.lower(), 0)
+                pct = round((mentions / total_q) * 100) if total_q > 0 else 0
+                comp_rows.append({"Brand": comp, "AI Mentions": mentions,
+                                  "Visibility": f"{pct}%",
+                                  "Status": "✅ Detected" if mentions > 0 else "⚪ Not mentioned"})
+            for brand_c, count in real_competitors[:8]:
+                if brand_c.lower() not in [c.lower() for c in user_competitors] and brand_c.lower() != brand_name.lower():
+                    pct = round((count / total_q) * 100) if total_q > 0 else 0
+                    comp_rows.append({"Brand": brand_c, "AI Mentions": count,
+                                      "Visibility": f"{pct}%", "Status": "Also detected"})
+            st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
+
             # ── Brand mention context ────────────────────────────────────
             st.subheader("How Your Brand Was Mentioned")
             ctx = scores["context_breakdown"]
@@ -2302,7 +2390,7 @@ elif st.session_state.step == 4:
                     "AI Model": r["tool"],
                     "Prompt": r["query"],
                     "Brand Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
-
+                    "Position": r["brands_detected"]["target_position"] or "-",
                     "Context": r["brands_detected"]["target_context"],
                     "Linked Sites": len(r.get("linked_sites", [])),
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
@@ -2321,7 +2409,7 @@ elif st.session_state.step == 4:
                     "AI Model": r["tool"],
                     "Prompt": r["query"],
                     "Brand Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
-
+                    "Position": r["brands_detected"]["target_position"] or "-",
                     "Context": r["brands_detected"]["target_context"],
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
                     "Linked Sites": "; ".join([s["url"] for s in r.get("linked_sites", [])]),
@@ -2334,6 +2422,67 @@ elif st.session_state.step == 4:
                 file_name=f"citation_{brand_name.lower().replace(' ', '_')}.csv",
                 mime="text/csv"
             )
+
+            # ── Gap Finder ────────────────────────────────────────────────
+            st.divider()
+            st.subheader("🔍 Gap Finder")
+            st.caption(
+                "Analyzes your tracking results to find exactly why competitors appear and you don't. "
+                "Evidence-based gaps — not generic SEO advice."
+            )
+
+            if st.button("🔍 Generate Gap Analysis", type="primary", use_container_width=False):
+                with st.spinner("Analyzing AI responses to find your visibility gaps..."):
+                    gap_analysis = generate_gap_analysis(bd, all_results, scores)
+                    st.session_state["_gap_analysis"] = gap_analysis
+
+            if st.session_state.get("_gap_analysis"):
+                gap_text = st.session_state["_gap_analysis"]
+                st.markdown("""
+                    <div style='background: linear-gradient(135deg, #1e3a5f 0%, #0f2340 100%);
+                                border-radius: 12px; padding: 4px 24px 20px 24px;
+                                border: 1px solid #2563eb44; margin: 16px 0;'>
+                """, unsafe_allow_html=True)
+
+                # Parse and render sections with styling
+                sections = {
+                    "1. VISIBILITY DIAGNOSIS": "🩺",
+                    "2. CONTENT GAPS": "📝",
+                    "3. CITATION FOOTPRINT GAPS": "🔗",
+                    "4. POSITIONING GAPS": "🎯",
+                    "5. TOP 3 PRIORITY ACTIONS": "⚡",
+                }
+                remaining = gap_text
+                for section_title, icon in sections.items():
+                    if section_title in remaining:
+                        parts = remaining.split(section_title, 1)
+                        before = parts[0].strip()
+                        remaining = parts[1]
+                        next_section_start = len(remaining)
+                        for other in sections:
+                            if other != section_title and other in remaining:
+                                idx = remaining.find(other)
+                                if idx < next_section_start:
+                                    next_section_start = idx
+                        section_body = remaining[:next_section_start].strip()
+                        remaining = remaining[next_section_start:]
+
+                        st.markdown(f"### {icon} {section_title.split('. ', 1)[1]}")
+                        st.markdown(section_body)
+                        st.markdown("---")
+
+                if remaining.strip():
+                    st.markdown(remaining.strip())
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                # Download gap analysis
+                st.download_button(
+                    label="📥 Download Gap Analysis",
+                    data=gap_text,
+                    file_name=f"gap_analysis_{brand_name.lower().replace(' ', '_')}.txt",
+                    mime="text/plain"
+                )
 
             # ── Re-run options ────────────────────────────────────────────
             st.divider()
@@ -2362,10 +2511,10 @@ elif st.session_state.step == 4:
                     label_visibility="collapsed"
                 )
                 if st.button("🚀 Re-run with this country", use_container_width=True):
-                    # Update country in brand_data and clear all downstream cache
+                    # Update country in brand_data and clear cached website text
                     # so topics/prompts regenerate with new country context
                     st.session_state.brand_data["country"] = new_country
-                    # Clear cached prompts and topic intents so they regenerate
+                    # Clear cached prompts so they regenerate with new country
                     st.session_state.prompts_by_topic = {}
                     st.session_state.selected_prompts = {}
                     st.session_state.topics = []
@@ -2373,7 +2522,4 @@ elif st.session_state.step == 4:
                     st.session_state.run_complete = False
                     st.session_state.all_results = []
                     st.session_state.step = 2
-                    # Clear _topic_intents so stale country-specific intents don't persist
-                    if "brand_data" in st.session_state:
-                        st.session_state.brand_data.pop("_topic_intents", None)
                     st.rerun()
