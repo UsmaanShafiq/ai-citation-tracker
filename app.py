@@ -2662,8 +2662,6 @@ elif st.session_state.step == 4:
                                 st.markdown(f"**{r['tool']}**")
                                 mentioned = r["brands_detected"]["target_mentioned"]
                                 context = r["brands_detected"]["target_context"]
-                                position = r["brands_detected"]["target_position"]
-
                                 # Final safety check: verify brand actually in response text
                                 # Catches any LLM hallucination from brand_detector
                                 import re as _re_check
@@ -2776,7 +2774,6 @@ elif st.session_state.step == 4:
                     "AI Model": r["tool"],
                     "Prompt": r["query"],
                     "Brand Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
-                    "Position": r["brands_detected"]["target_position"] or "-",
                     "Context": r["brands_detected"]["target_context"],
                     "Linked Sites": len(r.get("linked_sites", [])),
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
@@ -2795,7 +2792,6 @@ elif st.session_state.step == 4:
                     "AI Model": r["tool"],
                     "Prompt": r["query"],
                     "Brand Mentioned": "Yes" if r["brands_detected"]["target_mentioned"] else "No",
-                    "Position": r["brands_detected"]["target_position"] or "-",
                     "Context": r["brands_detected"]["target_context"],
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
                     "Linked Sites": "; ".join([s["url"] for s in r.get("linked_sites", [])]),
