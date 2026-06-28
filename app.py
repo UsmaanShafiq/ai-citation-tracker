@@ -2039,24 +2039,14 @@ elif st.session_state.step == 2:
     # Auto-generate if not done yet
     if not st.session_state.topics:
 
-        # ── Step 1: Show iframe preview + fetch website in parallel ──────────
+        # ── Step 1: Fetch website content ────────────────────────────────────
         domain = bd.get("domain", "")
-
-        # Build the full URL for iframe display
         iframe_url = domain if domain.startswith("http") else f"https://{domain}"
 
-        # Show the website in an iframe so the user can see we are visiting it
-        st.markdown("#### 🌐 Visiting your website...")
-        st.caption(f"We are reading: **{iframe_url}**")
+        st.markdown("#### 🌐 Reading your website...")
+        st.caption(f"Fetching content from: **{iframe_url}**")
 
-        # Embed the actual website in an iframe
-        st.components.v1.iframe(
-            src=iframe_url,
-            height=320,
-            scrolling=True
-        )
-
-        # Now fetch the content in background
+        # Fetch the content
         with st.spinner("📖 Reading and extracting content from your website..."):
             if "_website_text" not in st.session_state.brand_data:
                 website_text = fetch_brand_website(domain)
@@ -2674,7 +2664,7 @@ elif st.session_state.step == 4:
                                     mentioned = False  # Override false positive
 
                                 if mentioned:
-                                    st.success(f"Brand mentioned | Context: {context} | Position: #{position}")
+                                    st.success(f"✅ {brand_name} appears in this response | Context: {context}")
                                 else:
                                     st.warning("Brand not mentioned")
 
