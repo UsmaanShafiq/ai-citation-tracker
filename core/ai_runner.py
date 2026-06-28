@@ -19,12 +19,88 @@ CHATGPT_FALLBACK_MODELS = ["gpt-5.4-mini", "gpt-5.4-nano"]
 CHATGPT_MAX_OUTPUT_TOKENS = 16384
 
 CHATGPT_SYSTEM_INSTRUCTION = (
-    "Answer the user's question thoroughly and completely, the same way you would "
-    "in the ChatGPT web interface. For product, service, or vendor recommendations: "
-    "mention specific company and product names; use comparison tables when helpful; "
-    "organize with clear sections and bullet points; give practical recommendations "
-    "by use case or buyer stage. Do not artificially shorten your answer."
+    "You are ChatGPT answering in the web interface. Match that depth, structure, and tone.\n\n"
+    "MANDATORY FOR TOOL / VENDOR / SOFTWARE / SERVICE QUESTIONS:\n"
+    "1. NEVER respond with generic advice like 'research online', 'check G2', or 'consult professionals'.\n"
+    "2. ALWAYS name at least 10 specific real products, companies, or vendors by name.\n"
+    "3. ALWAYS include a markdown comparison table with columns like: Tool | Best for | Pros | Cons.\n"
+    "4. ALWAYS include a 'My recommendation' or 'Best pick by use case' section with 2-3 scenarios.\n"
+    "5. Write at least 400 words. Use clear headers, bullet points, and a closing summary.\n"
+    "6. If the user query is a short keyword phrase, treat it as a buyer asking for recommendations "
+    "and answer as if they typed a full question in ChatGPT.\n"
+    "7. Do not artificially shorten. Give the same rich answer a user would see on chat.openai.com."
 )
+
+
+def _wrap_chatgpt_user_query(query: str) -> str:
+    """Expand bare keywords into a full buyer question so the model answers like ChatGPT web."""
+    q = (query or "").strip()
+    if not q:
+        return q
+    word_count = len(q.split())
+    is_question = q.endswith("?") or any(
+        q.lower().startswith(w) for w in ("what", "which", "who", "how", "where", "when", "as a", "i ", "we ")
+    )
+    if word_count <= 6 and not is_question:
+        return (
+            f"{q}\n\n"
+            "I'm evaluating options and want a detailed answer like ChatGPT would give on the web. "
+            "Please recommend specific named tools or vendors (at least 10), include a comparison table, "
+            "explain pros and cons, and give clear recommendations by use case."
+        )
+    if not is_question:
+        return (
+            f"{q}\n\n"
+            "Please answer in full ChatGPT style: name specific products/vendors, use a comparison table, "
+            "and give practical recommendations — not generic steps to research."
+        )
+    return q
+
+
+def _extract_responses_api_text(response) -> str:
+    """Collect full assistant text from all output blocks (not just the first snippet)."""
+    parts = []
+    if hasattr(response, "output_text") and response.output_text:
+        parts.append(response.output_text.strip())
+
+    if hasattr(response, "output"):
+        for item in response.output:
+            if getattr(item, "type", "") != "message":
+                continue
+            for block in getattr(item, "content", []) or []:
+                text = getattr(block, "text", None)
+                if text and text.strip():
+                    parts.append(text.strip())
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return "\n\n".join(unique).strip()
+
+
+def _extract_responses_api_sources(response) -> list:
+    sources = []
+    if not hasattr(response, "output"):
+        return sources
+    for item in response.output:
+        if getattr(item, "type", "") != "message":
+            continue
+        for block in getattr(item, "content", []) or []:
+            for ann in getattr(block, "annotations", []) or []:
+                url = getattr(ann, "url", "")
+                if url:
+                    parts = url.split("/")
+                    domain = parts[2] if len(parts) > 2 else url
+                    sources.append({
+                        "title": getattr(ann, "title", domain),
+                        "url": url,
+                        "domain": domain,
+                    })
+    return sources
 
 
 def _is_openai_rate_limit_error(exc: Exception) -> bool:
@@ -228,6 +304,7 @@ def run_on_chatgpt(query: str, country: str = "") -> dict:
 
         web_search_error = None
         models_to_try = [CHATGPT_DEFAULT_MODEL] + CHATGPT_FALLBACK_MODELS
+        user_input = _wrap_chatgpt_user_query(query)
 
         for model_name in models_to_try:
             # ── Method 1: Responses API with web_search tool ────────────────
@@ -236,38 +313,26 @@ def run_on_chatgpt(query: str, country: str = "") -> dict:
                     model=model_name,
                     instructions=CHATGPT_SYSTEM_INSTRUCTION,
                     tools=[{"type": "web_search"}],
-                    input=query,
+                    input=user_input,
                     max_output_tokens=CHATGPT_MAX_OUTPUT_TOKENS
                 )
 
-                result_text = ""
-                sources = []
+                result_text = _extract_responses_api_text(response)
+                sources = _extract_responses_api_sources(response)
 
-                if hasattr(response, "output_text") and response.output_text:
-                    result_text = response.output_text.strip()
-
-                if hasattr(response, "output"):
-                    for item in response.output:
-                        item_type = getattr(item, "type", "")
-                        if item_type == "message":
-                            for block in item.content:
-                                if not result_text and hasattr(block, "text"):
-                                    result_text = block.text.strip()
-                                if hasattr(block, "annotations"):
-                                    for ann in block.annotations:
-                                        url = getattr(ann, "url", "")
-                                        if url:
-                                            parts = url.split("/")
-                                            domain = parts[2] if len(parts) > 2 else url
-                                            sources.append({
-                                                "title": getattr(ann, "title", domain),
-                                                "url": url,
-                                                "domain": domain
-                                            })
+                status = getattr(response, "status", None)
+                if status == "incomplete":
+                    web_search_error = f"{model_name} response incomplete (hit output limit)"
 
                 if result_text:
                     track_usage("ChatGPT", result_text)
-                    return {"text": result_text, "sources": sources, "web_searched": True, "model_used": model_name}
+                    return {
+                        "text": result_text,
+                        "sources": sources,
+                        "web_searched": True,
+                        "model_used": model_name,
+                        "incomplete": status == "incomplete",
+                    }
                 web_search_error = f"{model_name} Responses API returned empty text"
 
             except Exception as e1:
@@ -282,7 +347,7 @@ def run_on_chatgpt(query: str, country: str = "") -> dict:
                     model=model_name,
                     messages=[
                         {"role": "system", "content": CHATGPT_SYSTEM_INSTRUCTION},
-                        {"role": "user", "content": query}
+                        {"role": "user", "content": user_input}
                     ],
                     max_tokens=CHATGPT_MAX_OUTPUT_TOKENS
                 )

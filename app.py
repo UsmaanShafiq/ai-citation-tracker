@@ -10,7 +10,12 @@ load_dotenv()
 sys.path.append(os.path.dirname(__file__))
 
 from core.scorer import calculate_citation_share, calculate_citation_share_by_topic, calculate_citation_share_by_group
-from core.ai_runner import ALL_TOOLS, run_selected_tools, check_key_exists, get_usage_stats, reset_usage_stats
+# DataForSEO runner replaces the old multi-tool API runner.
+# To re-enable the old runner, change this import back to:
+#   # DataForSEO runner — replaces old multi-tool API runner for tracking runs.
+# To revert, change this back to:
+#   from core.ai_runner import ALL_TOOLS, run_selected_tools, check_key_exists, get_usage_stats, reset_usage_stats
+from core.dataforseo_runner import ALL_TOOLS, run_selected_tools, check_key_exists, get_usage_stats, reset_usage_stats
 from core.brand_detector import detect_brands
 
 
@@ -663,9 +668,19 @@ def ai_generate_topics(brand_data: dict) -> list:
 
     buyer_searches = brand_understanding.get("buyer_searches", [])
     business_category = brand_understanding.get("business_category", "agency")
-    category_word = business_category or business_type or "services"
     what_business_does = brand_understanding.get("what_business_does", "")
     exact_buyer = brand_understanding.get("exact_buyer", "")
+
+    # Derive category_word from business type (used in topic fallbacks)
+    bt_lower_t = business_type.lower()
+    if any(w in bt_lower_t for w in ["training", "education", "bootcamp"]):
+        category_word = "training"
+    elif any(w in bt_lower_t for w in ["agency", "service", "studio"]):
+        category_word = "agency"
+    elif any(w in bt_lower_t for w in ["saas", "software", "platform"]):
+        category_word = "software"
+    else:
+        category_word = business_category or "provider"
 
     # ── PHASE 3: Generate topics grounded in brand anchors ────────────────────
     country_note = ("User country: " + country + "\n") if country and country.lower() not in ["global", ""] else ""
@@ -1633,28 +1648,6 @@ def tag_input(label: str, session_key: str, placeholder: str = "", help_text: st
 
 st.set_page_config(page_title="AI Citation Tracker", page_icon="📡", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    /* Ensure full AI responses wrap instead of clipping horizontally */
-    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p,
-    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] li,
-    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] td,
-    [data-testid="stExpander"] div[data-testid="stMarkdownContainer"] th {
-        white-space: normal !important;
-        overflow-wrap: anywhere !important;
-        word-break: break-word !important;
-    }
-    .ai-response-full {
-        white-space: pre-wrap !important;
-        overflow-wrap: anywhere !important;
-        word-break: break-word !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 st.title("📡 AI Citation Tracker")
 st.caption("Track how often your brand appears in AI-generated recommendations")
 st.divider()
@@ -1704,11 +1697,14 @@ with st.sidebar:
 
     with st.expander("Manage API Keys"):
         key_fields = {
+            "DATAFORSEO_LOGIN":    "DataForSEO Login (email)",
+            "DATAFORSEO_PASSWORD": "DataForSEO Password",
+            # Legacy API keys — kept for topic/prompt generation only
+            "GEMINI_API_KEY":  "Gemini (topic generation)",
+            "OPENAI_API_KEY":  "OpenAI (topic generation)",
             # "GROQ_API_KEY": "Groq (Free)",  # GROQ DISABLED
-            "PERPLEXITY_API_KEY": "Perplexity",
-            "GEMINI_API_KEY": "Gemini (Free tier)",
-            "OPENAI_API_KEY": "OpenAI / ChatGPT",
-            "ANTHROPIC_API_KEY": "Claude / Anthropic",
+            # "PERPLEXITY_API_KEY": "Perplexity",  # DISABLED
+            # "ANTHROPIC_API_KEY": "Claude",  # DISABLED
         }
         updated_keys = {}
         keys_to_remove = []
@@ -2280,12 +2276,10 @@ elif st.session_state.step == 4:
                     response_text = raw_response.get("text", "") or ""
                     web_sources = raw_response.get("sources", [])
                     web_searched = raw_response.get("web_searched", False)
-                    model_used = raw_response.get("model_used", "")
                 else:
                     response_text = str(raw_response) if raw_response else ""
                     web_sources = []
                     web_searched = False
-                    model_used = ""
 
                 # Auto-retry once on empty response
                 if not response_text.strip() or len(response_text.strip()) < 30:
@@ -2297,7 +2291,6 @@ elif st.session_state.step == 4:
                         response_text = retry_raw.get("text", "") or ""
                         web_sources = retry_raw.get("sources", [])
                         web_searched = retry_raw.get("web_searched", False)
-                        model_used = retry_raw.get("model_used", model_used)
                     elif retry_raw:
                         response_text = str(retry_raw)
 
@@ -2337,7 +2330,6 @@ elif st.session_state.step == 4:
                     "brands_detected": brand_data_detected,
                     "linked_sites": linked_sites,
                     "web_searched": web_searched,
-                    "model_used": model_used,
                 })
 
                 # Update live feed
@@ -2555,13 +2547,13 @@ elif st.session_state.step == 4:
 
                     # Per prompt per model table
                     prompt_texts = list(set(r["query"] for r in topic_results))
-                    for p_idx, prompt_text in enumerate(prompt_texts):
+                    for prompt_text in prompt_texts:
                         prompt_results = [r for r in topic_results if r["query"] == prompt_text]
 
                         # Build badge row
                         badge_cols = st.columns([3] + [1] * len(models_in_topic))
                         with badge_cols[0]:
-                            st.markdown(prompt_text)
+                            st.caption(f"+ {prompt_text[:80]}{'...' if len(prompt_text) > 80 else ''}")
                         for col, model in zip(badge_cols[1:], models_in_topic):
                             model_result = next((r for r in prompt_results if r["tool"] == model), None)
                             if model_result and model_result["brands_detected"]["target_mentioned"]:
@@ -2572,8 +2564,7 @@ elif st.session_state.step == 4:
                                 col.caption("—")
 
                         # Drill-down expander for each prompt
-                        with st.expander("View details", expanded=False, key=f"details_{topic}_{p_idx}"):
-                            st.markdown(f"**Prompt:** {prompt_text}")
+                        with st.expander(f"View details: {prompt_text[:60]}..."):
                             for r in prompt_results:
                                 st.markdown(f"**{r['tool']}**")
                                 mentioned = r["brands_detected"]["target_mentioned"]
@@ -2603,8 +2594,6 @@ elif st.session_state.step == 4:
                                     st.markdown(f"🌐 **Web searched** · 📎 **{src_count} source{'s' if src_count != 1 else ''} used**")
                                 elif web_searched_r:
                                     st.markdown("🌐 **Web searched**")
-                                if r.get("model_used"):
-                                    st.caption(f"Model: `{r['model_used']}`")
 
                                 # AI Response expander
                                 response = r.get("response", "")
@@ -2641,7 +2630,7 @@ elif st.session_state.step == 4:
                                                 highlighted,
                                                 flags=_re.IGNORECASE
                                             )
-                                        st.markdown(highlighted)
+                                        st.markdown(highlighted[:3000])
                                         if mentioned:
                                             st.success(f"✅ {brand_name} appears in this response")
                                     else:
@@ -2695,12 +2684,12 @@ elif st.session_state.step == 4:
                     "Context": r["brands_detected"]["target_context"],
                     "Linked Sites": len(r.get("linked_sites", [])),
                     "Brands Found": ", ".join(r["brands_detected"]["all_brands"][:5]),
-                    "Full Response": r.get("response", ""),
+                    "Response Preview": r["response"][:200] + "..." if len(r.get("response", "")) > 200 else r.get("response", ""),
                 })
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True, hide_index=True,
                          column_config={"Prompt": st.column_config.TextColumn(width="large"),
-                                        "Full Response": st.column_config.TextColumn(width="large")})
+                                        "Response Preview": st.column_config.TextColumn(width="large")})
 
             # ── CSV download ──────────────────────────────────────────────
             csv_rows = []
