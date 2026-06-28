@@ -1260,6 +1260,14 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "Slot 4: Persona — first person only, one persona from ICP list, one differentiator, natural casual tone.\n"
         "Slot 5: Comparison — always 'How does [Brand] compare to [Competitor] for [topic]?'\n\n"
 
+        "NATURALNESS RULE:\n"
+        "Do not copy the topic name verbatim into every prompt. "
+        "Express the same concept in natural language the way a real person would say it. "
+        "For example if the topic is 'free patent search tool' write "
+        "'a tool that searches patents at no cost' or 'something to help me find prior art for free' "
+        "rather than repeating 'free patent search tool' word for word. "
+        "The meaning must be identical but the phrasing must sound human.\n\n"
+
         "VOCABULARY RULES:\n"
         "- SaaS/Software brands: use 'tools', 'platforms', 'solutions' in slots 2-3. Never 'agencies'.\n"
         "- Agency/Service brands: use 'agencies', 'firms', 'companies' in slots 2-3. Never 'software'.\n"
@@ -1299,7 +1307,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         "Slot 2: Discovery using opener: '" + p2_opener + "' (third person only)\n"
         "  Industry examples: '" + _s2_ex[0] + "' OR '" + _s2_ex[1] + "'\n"
         "Slot 3: " + _s3_type.upper() + " (this is the pre-assigned type — do not substitute)\n"
-        "  Example for this type: '" + _s3_example + "'\n"
+        "  Example style (paraphrase, do not copy): '" + _s3_example + "'\n"
         "Slot 4: Persona prompt (first person only)\n"
         "  Persona: " + persona_role + " (singular, from ICP list only)\n"
         "  Must reference a differentiator. End with 'What do you recommend?' or 'Any suggestions?'\n"
@@ -1507,7 +1515,12 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
         if len(result) < 5:
             result.append(howto)
         else:
-            result[2] = howto  # Slot 3 — leaves slots 4 and 5 intact
+            # Only overwrite slot 3 if how-to was its pre-assigned type
+            # Otherwise put it in slot 2 to preserve slot 3's rotation type
+            if _topic_hash_s3 == 1:  # Type 1 = how-to
+                result[2] = howto
+            else:
+                result[1] = howto  # Slot 2 — slot 3 keeps its pre-assigned type
 
     # Final pad to guarantee exactly 5
     _pad = [
@@ -1559,7 +1572,7 @@ def ai_generate_prompts(topic: str, brand_data: dict) -> list:
             for line in _audit_raw.strip().split('\n')
             if _vre.match(r'^\d+\.', line.strip())
         ]
-        if len(_audit_lines) == 5:
+        if len(_audit_lines) >= 4:
             # Apply brand cap fix in case the auditor changed capitalisation
             result = [_fix_brand_cap(p, brand_name) for p in _audit_lines]
             # Re-ensure comparison is still slot 5
