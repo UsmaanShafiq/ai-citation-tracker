@@ -1359,7 +1359,14 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "explain", "guide", "tutorial", "tips for", "ways to",
         "understanding", "introduction to", "overview of", "learn",
         "difference between", "why is", "when should", "how does",
-        "what makes", "how can i improve", "how do i"
+        "what makes", "how can i improve", "how do i",
+        "what suggestions do you have",
+        "what recommendations do you have",
+        "what advice would you give",
+        "what tips do you have",
+        "what would you recommend for",
+        "what do you think about",
+        "what should i know",
     ]
 
     def is_citation_producing(p):
@@ -1368,6 +1375,20 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         Universal logic - works for any industry, any niche.
         """
         pl = p.lower().strip()
+
+        # Explicit block for advice/suggestion patterns — caught regardless of position
+        # These are informational asks that produce advice not brand names
+        _advice_patterns = [
+            "what suggestions do you have",
+            "what recommendations do you have",
+            "what advice would you give",
+            "what tips do you have",
+            "what would you recommend for",
+            "what do you think about",
+            "what should i know",
+        ]
+        if any(pattern in pl for pattern in _advice_patterns):
+            return False  # Reject immediately — informational not citation-producing
 
         # Rule 1: Must have at least one citation trigger
         has_trigger = any(trigger in pl for trigger in CITATION_TRIGGERS)
