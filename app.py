@@ -624,16 +624,17 @@ def ai_generate_topics(brand_data: dict) -> list:
         for qa in buyer_insights:
             buyer_insights_text += "Q: " + qa["question"] + "\nA: " + qa["answer"] + "\n\n"
 
-    raw_context = ""
-    if website_text:
-        raw_context += "WEBSITE CONTENT:\n" + website_text[:2500] + "\n\n"
-    raw_context += (
+    # Fix 2: Form data is primary source of truth. Website is supplementary gap-filler only.
+    # key_features explicitly included so it cannot be overridden by website language.
+    raw_context = (
         "Brand: " + brand_name + "\n"
         + "Business type: " + business_type + "\n"
-        + "Products/Services: " + products + "\n"
-        + "Target customers: " + customers + "\n"
-        + "Key differentiators: " + key_features + "\n"
-        + "Competitors: " + ", ".join(competitors_list) + "\n"
+        + "Products and Services: " + products + "\n"
+        + "Key Differentiators (use these as primary topic anchors): " + key_features + "\n"
+        + "Target Customers: " + customers + "\n"
+        + "Competitors: " + ", ".join(competitors_list) + "\n\n"
+        + "Website content (supplementary only — use only if the form fields above do not provide enough context):\n"
+        + (website_text[:1000] if website_text else "(not available)")
     )
 
     understanding_prompt = (
@@ -643,12 +644,14 @@ def ai_generate_topics(brand_data: dict) -> list:
         + buyer_insights_text
         + "\nAnswer about THIS specific brand:\n"
         + '{\n'
-        + '  "what_business_does": "One specific sentence. Use the brand own terminology from website.",\n'
+        + '  "what_business_does": "One specific sentence. Use terminology from Products and Services field first.",\n'
         + '  "exact_buyer": "Job title, company type, and problem they need solved.",\n'
-        + '  "buyer_searches": ["5 exact phrases buyer types into AI tools. Use brand product names. Start with best/top/which/who/compare."],\n'
+        + '  "buyer_searches": ["5 exact phrases buyer types into AI tools. Use exact words from Key Differentiators and Products fields. Start with best/top/which/who/compare."],\n'
         + '  "business_category": "Single word: agency OR software OR platform OR firm OR provider OR training company"\n'
         + '}\n\n'
-        + "CRITICAL: Use actual product and vendor names from the website.\n"
+        + "PRIORITY RULE: The Key Differentiators and Products and Services fields take absolute priority over website content.\n"
+        + "Generate buyer_searches using the exact language from those fields first.\n"
+        + "Only use website content to add context if the form fields are sparse or incomplete.\n"
         + "WRONG: best GEO agency. RIGHT: best agency for Generative Engine Optimization using BlueprintIQ\n"
         + "WRONG: cybersecurity training. RIGHT: best authorized Palo Alto Networks training company\n"
         + "Respond ONLY with valid JSON. No markdown."
@@ -694,12 +697,12 @@ def ai_generate_topics(brand_data: dict) -> list:
     topic_prompt = (
         "You generate topic names for AI visibility tracking.\n\n"
         + term_glossary
-        + "BRAND INPUT DATA (use exact phrases from here as the core of each topic):\n"
+        + "BRAND FORM DATA (primary source of truth — always prioritise this over website content):\n"
         + "Brand: " + brand_name + "\n"
         + "Business type: " + business_category + "\n"
-        + "Anchor terms (use at least 3 of these in topics):\n"
+        + "Anchor terms — use at least 3 of these as the core of generated topics:\n"
         + anchor_list
-        + "\n\nRAW BRAND DATA:\n"
+        + "\n\nFULL BRAND DATA (form data first, website supplementary):\n"
         + raw_context
         + country_note
         + "\nGenerate 5 topic names. Each topic is a short noun phrase, not a question.\n\n"
@@ -808,17 +811,26 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
     resolved_terms = brand_data.get("_resolved_terms", {})
     term_glossary = build_term_glossary(resolved_terms)
 
-    # Build context block
+    # Fix 1: Form data is primary. key_features explicitly passed so model draws
+    # differentiators from user input, not from website text.
+    features_list_pg = brand_data.get("key_features", [])
+    key_features_pg  = ", ".join(features_list_pg)
+
     if website_text:
         context_block = (
-            "Website content (primary source of truth for what this brand does):\n"
-            + website_text[:1500]
-            + "\n\nForm data: " + products + " | Customers: " + customers
+            "Brand form data (primary source of truth — always prioritise this):\n"
+            + "Products and Services: " + products + "\n"
+            + "Key Differentiators: " + key_features_pg + "\n"
+            + "Target Customers: " + customers + "\n\n"
+            + "Website content (supplementary context only — use only to fill gaps not covered above):\n"
+            + website_text[:800]
         )
     else:
         context_block = (
-            "What they offer: " + products + "\n"
-            "Who buys from them: " + customers
+            "Brand form data (primary source of truth):\n"
+            + "Products and Services: " + products + "\n"
+            + "Key Differentiators: " + key_features_pg + "\n"
+            + "Target Customers: " + customers
         )
 
     # Priority 10: Competitors LOCKED to user input only
@@ -1171,7 +1183,9 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "Slot 1: Plain keyword — copy topic exactly, nothing added.\n"
         "Slot 2: Discovery/best-of — third person only, use the business-type opener provided, never 'I' or 'we'.\n"
         "Slot 3: Use the PRE-ASSIGNED INTENT TYPE provided — do not choose freely.\n"
-        "Slot 4: Persona — first person only, one persona from ICP list, one differentiator, natural casual tone.\n"
+        "Slot 4: Persona prompt — must reference one of these specific differentiators from the user's input: "
+        + (key_features_pg[:300] if key_features_pg else "a key product feature") + "\n"
+        "Do NOT invent differentiators from website text. Use only the list above.\n\n"
         "Slot 5: Comparison — always 'How does [Brand] compare to [Competitor] for [topic]?'\n\n"
 
         "NATURALNESS RULE:\n"
@@ -1224,7 +1238,9 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "  Example style (paraphrase, do not copy): '" + _s3_example + "'\n"
         "Slot 4: Persona prompt (first person only)\n"
         "  Persona: " + persona_role + " (singular, from ICP list only)\n"
-        "  Must reference a differentiator. End with 'What do you recommend?' or 'Any suggestions?'\n"
+        "  Must reference one of these SPECIFIC differentiators (do not use website language): "
+        + (key_features_pg[:200] if key_features_pg else "a product feature") + "\n"
+        "  End with 'What do you recommend?' or 'Any suggestions?'\n"
         "Slot 5: Comparison — format exactly:\n"
         "  'How does " + brand_name + " compare to "
         + (comp_for_comparison[0] if comp_for_comparison else "a named competitor")
