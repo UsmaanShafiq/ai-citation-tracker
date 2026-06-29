@@ -816,6 +816,32 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
     features_list_pg = brand_data.get("key_features", [])
     key_features_pg  = ", ".join(features_list_pg)
 
+    # Topic-relevant differentiator selection for slot 4
+    def _pick_relevant_differentiator(topic_str: str, features: list, fallback_idx: int) -> str:
+        """
+        Picks the differentiator most relevant to the current topic.
+        Checks word overlap between topic name and each feature.
+        Falls back to rotation if no match found.
+        """
+        if not features:
+            return "a key product feature"
+        STOP = {"and", "for", "the", "a", "an", "of", "in", "to", "with",
+                "that", "is", "are", "or", "on", "at", "by", "as"}
+        topic_words = set(topic_str.lower().split()) - STOP
+        for feature in features:
+            feature_words = set(feature.lower().split()) - STOP
+            if topic_words & feature_words:
+                return feature
+        # No overlap — use rotation fallback
+        return features[fallback_idx % len(features)]
+
+    _topic_hash_diff = sum(ord(c) for c in topic) % max(len(features_list_pg), 1)
+    selected_differentiator = _pick_relevant_differentiator(
+        topic_str=topic,
+        features=features_list_pg,
+        fallback_idx=_topic_hash_diff,
+    )
+
     if website_text:
         context_block = (
             "Brand form data (primary source of truth — always prioritise this):\n"
@@ -1185,6 +1211,7 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "Slot 3: Use the PRE-ASSIGNED INTENT TYPE provided — do not choose freely.\n"
         "Slot 4: Persona prompt — must reference one of these specific differentiators from the user's input: "
         + (key_features_pg[:300] if key_features_pg else "a key product feature") + "\n"
+        "Prefer the differentiator that most naturally relates to the topic being searched.\n"
         "Do NOT invent differentiators from website text. Use only the list above.\n\n"
         "Slot 5: Comparison — always 'How does [Brand] compare to [Competitor] for [topic]?'\n\n"
 
@@ -1233,13 +1260,15 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "PRE-ASSIGNED SLOT TYPES FOR THIS GENERATION:\n"
         "Slot 1: Plain keyword — output exactly: " + topic + "\n"
         "Slot 2: Discovery using opener: '" + p2_opener + "' (third person only)\n"
-        "  Industry examples: '" + _s2_ex[0] + "' OR '" + _s2_ex[1] + "'\n"
+        "  Write your own version. Do not copy these examples. Use them only to understand the intent:\n"
+        "  Example intent: '" + _s2_ex[0] + "'\n"
+        "  Your prompt must express the same intent but in different words that feel natural for this specific topic and industry.\n"
         "Slot 3: " + _s3_type.upper() + " (this is the pre-assigned type — do not substitute)\n"
         "  Example style (paraphrase, do not copy): '" + _s3_example + "'\n"
         "Slot 4: Persona prompt (first person only)\n"
         "  Persona: " + persona_role + " (singular, from ICP list only)\n"
-        "  Must reference one of these SPECIFIC differentiators (do not use website language): "
-        + (key_features_pg[:200] if key_features_pg else "a product feature") + "\n"
+        "  Must naturally reference this specific differentiator: '" + selected_differentiator + "'\n"
+        "  Use it in a way that feels natural to the buyer, not like a technical specification.\n"
         "  End with 'What do you recommend?' or 'Any suggestions?'\n"
         "Slot 5: Comparison — format exactly:\n"
         "  'How does " + brand_name + " compare to "
@@ -1338,7 +1367,13 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
             # Fix 2: Slot 3 persona guard
             # If this prompt is destined for slot 3, reject first-person "I" prompts
             # Persona prompts belong in slot 4 only
-            _is_firstperson = p.lower().startswith("i ") or p.lower().startswith("i'm") or p.lower().startswith("i am")
+            _is_firstperson = (
+                p.lower().startswith("i ") or
+                p.lower().startswith("i'm") or
+                p.lower().startswith("i am") or
+                p.lower().startswith("as a") or
+                p.lower().startswith("as an")
+            )
             if slot_index == 2 and _is_firstperson:  # slot_index 2 = position 3 (0-indexed)
                 continue
             # Skip prompts that will produce bad results
@@ -1508,6 +1543,48 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
     else:
         # Index 4+ → slot 5 = "Can [topic] help [persona] achieve outcome?"
         result[4] = _can_outcome
+
+    # ── Fix 3c: Same-opener validation — catches "Which... Which... Which..." pattern ──
+    # If any three prompts share the same first 3 words, regenerate the middle one.
+    # Runs before grammar audit so user never sees structural repetition.
+    def _first3(p):
+        return " ".join(p.lower().split()[:3])
+
+    opener_counts = {}
+    for p in result:
+        f3 = _first3(p)
+        opener_counts[f3] = opener_counts.get(f3, 0) + 1
+
+    repeated_openers = {f3 for f3, count in opener_counts.items() if count >= 2}
+
+    if repeated_openers:
+        # Find the duplicate prompts (skip slot 1 — bare topic, slot 5 — comparison/Can)
+        flagged_indices = [
+            i for i in range(1, 4)
+            if _first3(result[i]) in repeated_openers
+        ]
+        if flagged_indices:
+            _rephrase_instruction = (
+                "Rewrite this prompt completely using different opening words and a different sentence structure.\n"
+                "Keep the same intent but make it sound like a completely different person asking a different way.\n"
+                "Do not start with the same word as any other prompt in the set.\n"
+                "Current prompts in the set:\n"
+                + "\n".join(f"- {p}" for p in result)
+                + "\nRewrite prompt " + str(flagged_indices[0] + 1) + " only. "
+                "Return ONLY the rewritten prompt as a plain string. No JSON. No explanation."
+            )
+            try:
+                _rewritten = _call_ai_for_prompts(
+                    "You rewrite prompts to eliminate structural repetition. "
+                    "Return only the rewritten prompt as a plain string.",
+                    _rephrase_instruction
+                ).strip().strip('"').strip("'")
+                if _rewritten and len(_rewritten) > 10:
+                    result[flagged_indices[0]] = _fix_brand_cap(
+                        _normalise_abbr(_rewritten), brand_name
+                    )
+            except Exception:
+                pass  # Keep original if rephrase fails
 
     # ── Grammar audit pass — runs on all 5 prompts before display ─────────────
     # Catches errors the model produced despite rules:
