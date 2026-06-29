@@ -549,6 +549,55 @@ def build_term_glossary(resolved_terms: dict) -> str:
 
 
 
+def _filter_website_text(website_text: str, customers_str: str, max_chars: int = 800) -> str:
+    """
+    Filters website text before passing to generation context.
+    Removes lines containing industry/client examples that are not
+    part of the brand's own ICP description, preventing hallucination
+    of personas like 'finance firms' from case study pages.
+
+    Strategy: keep lines that describe what the brand DOES.
+    Remove lines that describe specific CLIENT industries not in the ICP.
+    """
+    import re as _re_fw
+
+    # Extract customer words from the ICP field to use as a whitelist
+    _icp_words = set(w.lower() for w in customers_str.split() if len(w) > 3)
+
+    # Sentence-level filtering: skip sentences that contain industry mentions
+    # only if those industries are NOT in the user's ICP description
+    INDUSTRY_SIGNALS = [
+        "fintech", "finance sector", "finance industry", "financial services",
+        "healthcare industry", "retail industry", "manufacturing sector",
+        "automotive industry", "pharmaceutical", "insurance industry",
+        "case study", "case studies", "client spotlight", "success story",
+        "our clients include", "we work with clients in",
+    ]
+
+    lines = website_text.split("\n")
+    kept = []
+    char_count = 0
+
+    for line in lines:
+        line_lower = line.lower()
+        # Check if line contains an industry signal
+        has_signal = any(sig in line_lower for sig in INDUSTRY_SIGNALS)
+        if has_signal:
+            # Only keep if the industry is in the user's ICP
+            # e.g. if "fintech" is in a fintech company's ICP, keep it
+            signal_in_icp = any(sig.split()[0] in _icp_words for sig in INDUSTRY_SIGNALS if sig in line_lower)
+            if not signal_in_icp:
+                continue  # skip this line
+        kept.append(line)
+        char_count += len(line)
+        if char_count >= max_chars:
+            break
+
+    result = "\n".join(kept).strip()
+    # Final hard cap
+    return result[:max_chars] if result else ""
+
+
 def ai_generate_topics(brand_data: dict) -> list:
     """
     Three-phase topic generation - universal, works for any business.
@@ -634,7 +683,7 @@ def ai_generate_topics(brand_data: dict) -> list:
         + "Target Customers: " + customers + "\n"
         + "Competitors: " + ", ".join(competitors_list) + "\n\n"
         + "Website content (supplementary only — use only if the form fields above do not provide enough context):\n"
-        + (website_text[:1000] if website_text else "(not available)")
+        + (_filter_website_text(website_text, customers) if website_text else "(not available)")
     )
 
     understanding_prompt = (
@@ -849,7 +898,7 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
             + "Key Differentiators: " + key_features_pg + "\n"
             + "Target Customers: " + customers + "\n\n"
             + "Website content (supplementary context only — use only to fill gaps not covered above):\n"
-            + website_text[:800]
+            + _filter_website_text(website_text, customers)
         )
     else:
         context_block = (
@@ -1564,33 +1613,56 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
             + selected_differentiator + ". What do you recommend?"
         ), brand_name)
 
-    # ── Step 5: Whitelist-only persona validation across all prompts ─────────────
-    # Validates every persona-containing prompt against the user's actual ICP list.
-    # No hardcoded industry lists — works correctly for every client in every industry.
+    # ── Step 5: Whitelist-only persona + slot 2 discovery validation ─────────────
+    # Covers ALL 5 prompts. No hardcoded industry lists.
     import re as _re_persona
+
+    # Words from user's ICP — used to validate both persona prompts and discovery targets
     _valid_persona_words = set()
+    _icp_industry_words  = set()
     for _cust in _customers_clean:
         for _cw in _cust.lower().split():
-            if len(_cw) > 3:
-                _valid_persona_words.add(_cw)
+            if len(_cw) > 3: _valid_persona_words.add(_cw)
+            if len(_cw) > 4: _icp_industry_words.add(_cw)
 
     _persona_pattern = _re_persona.compile(
         r"^(as an?|i am an?|i'm an?)\s+([a-z\s]+?)[\s,]",
         _re_persona.IGNORECASE
     )
+
     for _pi, _pp in enumerate(result):
+        # ── Check persona prompts (As a / I am a / I'm a) ──────────────────────
         _match = _persona_pattern.match(_pp.strip())
         if _match:
-            _persona_used = _match.group(2).lower().strip()
+            _persona_used      = _match.group(2).lower().strip()
             _persona_words_used = set(_persona_used.split())
             if not (_persona_words_used & _valid_persona_words):
-                # Persona not from user's ICP list — replace with pre-assigned persona
                 _article_s = "an" if _assigned_persona[0].lower() in "aeiou" else "a"
                 result[_pi] = _fix_brand_cap(_normalise_abbr(
                     "As " + _article_s + " " + _assigned_persona
                     + ", I need " + selected_differentiator
                     + ". What do you recommend?"
                 ), brand_name)
+            continue
+
+        # ── Check slot 2 discovery prompt for hallucinated industry targets ──────
+        # Slot 2 prompts like "Which agencies serve finance firms?" must only target
+        # industries/buyers from the user's ICP list, not website case study content.
+        if _pi == 1:
+            _disc_match = _re_persona.search(
+                r"for\s+([a-z][a-z\s]+?)(?:\?|$|,)", _pp.strip().lower()
+            )
+            if _disc_match:
+                _disc_target = _disc_match.group(1).strip()
+                _disc_words  = set(_disc_target.split()) - {
+                    "and", "the", "or", "in", "a", "an", "of", "with", "that"
+                }
+                # If words found AND none are in ICP — hallucinated industry target
+                if _disc_words and not (_disc_words & _icp_industry_words):
+                    result[1] = _fix_brand_cap(_normalise_abbr(
+                        "Which " + prompt_word + "s specialise in "
+                        + topic + " for " + _assigned_persona + "s?"
+                    ), brand_name)
 
     # ── Fix 3c: Same-opener validation — catches "Which... Which... Which..." pattern ──
     # If any three prompts share the same first 3 words, regenerate the middle one.
