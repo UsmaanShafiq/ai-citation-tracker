@@ -897,9 +897,8 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         solution_word = "product or service"
         avoid_line = ""
 
-    # Priority 6: Persona rotation through full ICP list
-    # Each topic gets a unique persona from Target Customers — no repeats until all used
-    # Only uses personas from the user's actual input list — never invents roles
+    # ── Steps 1 & 2: Pre-assign persona before generation — locked, not suggested ──
+    # Persona is determined in code. Model has zero freedom to choose or substitute.
     customers_list = brand_data.get("customers", [])
     SINGULAR_MAP_P = {
         "startups": "startup founder", "inventors": "inventor",
@@ -910,6 +909,8 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "scientists": "scientist", "lawyers": "lawyer",
         "companies": "company owner", "businesses": "business owner",
         "cmos": "CMO", "marketing managers": "marketing manager",
+        "saas founders": "SaaS founder", "saas ceos": "SaaS CEO",
+        "b2b founders": "B2B founder", "enterprise companies": "enterprise buyer",
     }
     def _make_singular(label):
         label = label.strip()
@@ -925,21 +926,26 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         if label.endswith("ors") and len(label) > 4: return label[:-1]
         return label
 
+    # Step 1: Build clean deduplicated persona list from user input only
     _customers_singular = [_make_singular(c) for c in customers_list if c.strip()]
-    # Deduplicate
     _seen_c = set()
-    _customers_unique = []
+    _customers_clean = []
     for c in _customers_singular:
         if c.lower() not in _seen_c:
             _seen_c.add(c.lower())
-            _customers_unique.append(c)
-    if not _customers_unique:
-        _customers_unique = ["startup founder", "researcher", "developer", "manager", "professional"]
+            _customers_clean.append(c)
+    if not _customers_clean:
+        _customers_clean = ["business owner"]  # safe fallback only
 
-    # Rotate starting point per topic hash
-    _topic_hash = sum(ord(c) for c in topic) % max(len(_customers_unique), 1)
-    _rotated_customers = _customers_unique[_topic_hash:] + _customers_unique[:_topic_hash]
-    persona_role = _rotated_customers[0]  # Primary persona for this topic
+    # Step 2: Pre-assign one persona per topic using deterministic hash
+    _topic_hash_persona = sum(ord(c) for c in topic) % len(_customers_clean)
+    _assigned_persona   = _customers_clean[_topic_hash_persona]
+    persona_role        = _assigned_persona  # kept for backward compat with Can variants
+
+    # Rotate starting point for other uses (slot 3 mistakes etc.)
+    _topic_hash      = _topic_hash_persona
+    _customers_unique = _customers_clean
+    _rotated_customers = _customers_clean[_topic_hash:] + _customers_clean[:_topic_hash]
 
     # Country as system context not in prompt text
     country_system = ""
@@ -1265,11 +1271,12 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
         "  Your prompt must express the same intent but in different words that feel natural for this specific topic and industry.\n"
         "Slot 3: " + _s3_type.upper() + " (this is the pre-assigned type — do not substitute)\n"
         "  Example style (paraphrase, do not copy): '" + _s3_example + "'\n"
-        "Slot 4: Persona prompt (first person only)\n"
-        "  Persona: " + persona_role + " (singular, from ICP list only)\n"
-        "  Must naturally reference this specific differentiator: '" + selected_differentiator + "'\n"
-        "  Use it in a way that feels natural to the buyer, not like a technical specification.\n"
-        "  End with 'What do you recommend?' or 'Any suggestions?'\n"
+        "Slot 4: Persona prompt — LOCKED PERSONA: '" + _assigned_persona + "'\n"
+        "  You must use this exact persona. Do not substitute, generalise, or replace it with any other role.\n"
+        "  Start with 'As a " + _assigned_persona + "' or 'I am a " + _assigned_persona + "'.\n"
+        "  Reference this specific differentiator naturally: '" + selected_differentiator + "'\n"
+        "  End with 'What do you recommend?' or 'Any suggestions?' or 'Which would you go with?'\n"
+        "  The persona must come from the brand's actual customer list. Never invent a persona.\n"
         "Slot 5: Comparison — format exactly:\n"
         "  'How does " + brand_name + " compare to "
         + (comp_for_comparison[0] if comp_for_comparison else "a named competitor")
@@ -1543,6 +1550,45 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
     else:
         # Index 4+ → slot 5 = "Can [topic] help [persona] achieve outcome?"
         result[4] = _can_outcome
+
+    # ── Step 4: Validate slot 4 contains the assigned persona ───────────────────
+    # If model drifted to a hallucinated persona, replace with safe constructed fallback
+    _slot4 = result[3] if len(result) > 3 else ""
+    _persona_words = [w for w in _assigned_persona.lower().split() if len(w) > 3]
+    _slot4_has_persona = any(w in _slot4.lower() for w in _persona_words)
+
+    if not _slot4_has_persona:
+        _article_p = "an" if _assigned_persona[0].lower() in "aeiou" else "a"
+        result[3] = _fix_brand_cap(_normalise_abbr(
+            "As " + _article_p + " " + _assigned_persona + ", I need "
+            + selected_differentiator + ". What do you recommend?"
+        ), brand_name)
+
+    # ── Step 5: Validate slot 3 mistakes questions use only ICP personas ─────────
+    # When slot 3 is a "mistakes" or "avoid" type, check for hallucinated personas
+    _slot3 = result[2] if len(result) > 2 else ""
+    if "mistake" in _slot3.lower() or "avoid" in _slot3.lower():
+        _valid_customer_words = set()
+        for _cust in _customers_clean:
+            for _cw in _cust.lower().split():
+                if len(_cw) > 3:
+                    _valid_customer_words.add(_cw)
+        # Personas that could appear if model hallucinated from general knowledge
+        _hallucinated = [
+            "finance", "banking", "retail", "healthcare", "hospital",
+            "government", "nonprofit", "manufacturing", "automotive", "pharmaceutical"
+        ]
+        _customers_str = " ".join(_customers_clean).lower()
+        _has_hallucination = any(
+            h in _slot3.lower() for h in _hallucinated
+            if h not in _customers_str
+        )
+        if _has_hallucination:
+            _article_s = "an" if _assigned_persona[0].lower() in "aeiou" else "a"
+            result[2] = _fix_brand_cap(_normalise_abbr(
+                "What mistakes do " + _assigned_persona + "s make when choosing "
+                + topic + "?"
+            ), brand_name)
 
     # ── Fix 3c: Same-opener validation — catches "Which... Which... Which..." pattern ──
     # If any three prompts share the same first 3 words, regenerate the middle one.
