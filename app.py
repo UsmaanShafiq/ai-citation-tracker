@@ -1564,31 +1564,33 @@ def ai_generate_prompts(topic: str, brand_data: dict, topic_index: int = 0) -> l
             + selected_differentiator + ". What do you recommend?"
         ), brand_name)
 
-    # ── Step 5: Validate slot 3 mistakes questions use only ICP personas ─────────
-    # When slot 3 is a "mistakes" or "avoid" type, check for hallucinated personas
-    _slot3 = result[2] if len(result) > 2 else ""
-    if "mistake" in _slot3.lower() or "avoid" in _slot3.lower():
-        _valid_customer_words = set()
-        for _cust in _customers_clean:
-            for _cw in _cust.lower().split():
-                if len(_cw) > 3:
-                    _valid_customer_words.add(_cw)
-        # Personas that could appear if model hallucinated from general knowledge
-        _hallucinated = [
-            "finance", "banking", "retail", "healthcare", "hospital",
-            "government", "nonprofit", "manufacturing", "automotive", "pharmaceutical"
-        ]
-        _customers_str = " ".join(_customers_clean).lower()
-        _has_hallucination = any(
-            h in _slot3.lower() for h in _hallucinated
-            if h not in _customers_str
-        )
-        if _has_hallucination:
-            _article_s = "an" if _assigned_persona[0].lower() in "aeiou" else "a"
-            result[2] = _fix_brand_cap(_normalise_abbr(
-                "What mistakes do " + _assigned_persona + "s make when choosing "
-                + topic + "?"
-            ), brand_name)
+    # ── Step 5: Whitelist-only persona validation across all prompts ─────────────
+    # Validates every persona-containing prompt against the user's actual ICP list.
+    # No hardcoded industry lists — works correctly for every client in every industry.
+    import re as _re_persona
+    _valid_persona_words = set()
+    for _cust in _customers_clean:
+        for _cw in _cust.lower().split():
+            if len(_cw) > 3:
+                _valid_persona_words.add(_cw)
+
+    _persona_pattern = _re_persona.compile(
+        r"^(as an?|i am an?|i'm an?)\s+([a-z\s]+?)[\s,]",
+        _re_persona.IGNORECASE
+    )
+    for _pi, _pp in enumerate(result):
+        _match = _persona_pattern.match(_pp.strip())
+        if _match:
+            _persona_used = _match.group(2).lower().strip()
+            _persona_words_used = set(_persona_used.split())
+            if not (_persona_words_used & _valid_persona_words):
+                # Persona not from user's ICP list — replace with pre-assigned persona
+                _article_s = "an" if _assigned_persona[0].lower() in "aeiou" else "a"
+                result[_pi] = _fix_brand_cap(_normalise_abbr(
+                    "As " + _article_s + " " + _assigned_persona
+                    + ", I need " + selected_differentiator
+                    + ". What do you recommend?"
+                ), brand_name)
 
     # ── Fix 3c: Same-opener validation — catches "Which... Which... Which..." pattern ──
     # If any three prompts share the same first 3 words, regenerate the middle one.
