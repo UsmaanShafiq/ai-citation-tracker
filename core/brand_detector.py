@@ -20,13 +20,7 @@ SERVICE_SIGNALS = [
 ]
 
 
-
 def detect_business_type(icp_text: str = "", brand_name: str = "") -> str:
-    """
-    Detects whether the brand is primarily a service/agency or a software/product.
-    Returns "service" or "software" as a general signal for the LLM.
-    This is used only as context hint - not for filtering results.
-    """
     combined = (icp_text + " " + brand_name).lower()
     service_score = sum(1 for s in SERVICE_SIGNALS if s in combined)
     software_score = sum(1 for s in SOFTWARE_SIGNALS if s in combined)
@@ -35,24 +29,36 @@ def detect_business_type(icp_text: str = "", brand_name: str = "") -> str:
     return "software"
 
 
+def confirm_with_brand_entities(brand_name: str, brand_entities: list) -> bool:
+    """
+    NEW: Checks if our target brand appears in the DataForSEO-detected brand_entities.
+    This is a second confirmation layer — regex is still the final authority.
+    Returns True if brand found in DataForSEO's auto-detected entity list.
+    brand_entities: list of {title, category, urls} from the scraper response.
+    """
+    if not brand_entities or not brand_name:
+        return False
+    brand_lower = brand_name.lower().strip()
+    for entity in brand_entities:
+        entity_name = (entity.get("title") or "").lower().strip()
+        if not entity_name:
+            continue
+        # Exact match or one contains the other
+        if entity_name == brand_lower:
+            return True
+        if brand_lower in entity_name or entity_name in brand_lower:
+            return True
+    return False
+
+
 def pass_one_string_match(
     response_text: str,
     business_type: str = "software",
     target_brand: str = "",
     user_competitors: list = None
 ) -> list:
-    """
-    Pass 1: String matching to catch brands the LLM might miss.
-    Only checks:
-    1. The target brand itself (whole-word match)
-    2. User-supplied competitors from the form (whole-word match)
-    Does NOT use a hardcoded brand list - that approach breaks for global users
-    across different industries. The LLM pass handles broader brand extraction.
-    """
     import re as _re
     found = []
-
-    # Build the list of brands to check from user-supplied data only
     brands_to_check = []
     if target_brand:
         brands_to_check.append(target_brand)
@@ -64,21 +70,12 @@ def pass_one_string_match(
         if pattern.search(response_text):
             if brand not in found:
                 found.append(brand)
-
     return found
 
 
 def _call_llm_for_detection(prompt: str) -> str:
-    """
-    Calls the best available LLM for brand detection.
-    Priority: OpenAI gpt-4o-mini first (best accuracy), Groq as free fallback.
-    NOTE: Groq fallback is intentionally kept here for brand DETECTION only.
-    It is separate from the tracking tools (ai_runner.py) where Groq is disabled.
-    This ensures brand detection always works even without an OpenAI key.
-    """
     import re as _re
 
-    # Try OpenAI first (preferred - most accurate for structured JSON output)
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     if openai_key and "paste_your" not in openai_key.lower():
         try:
@@ -91,14 +88,12 @@ def _call_llm_for_detection(prompt: str) -> str:
                 temperature=0.1
             )
             raw = result.choices[0].message.content.strip()
-            # Strip markdown fences if present
             if raw.startswith("```"):
                 raw = _re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
             return raw
         except Exception:
             pass
 
-    # Fallback: Try Groq
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key and "paste_your" not in groq_key.lower():
         try:
@@ -117,9 +112,7 @@ def _call_llm_for_detection(prompt: str) -> str:
         except Exception:
             pass
 
-    # If both fail, return a safe default JSON
-    return '{"all_brands": [], "target_mentioned": false, "target_position": 0, "target_context": "not_mentioned"}'
-
+    return '{"all_brands": [], "target_mentioned": false, "target_context": "not_mentioned"}'
 
 
 def pass_two_llm_detection(
@@ -127,14 +120,6 @@ def pass_two_llm_detection(
     target_brand: str,
     business_type: str = "software"
 ) -> dict:
-    """
-    Universal LLM-based brand detection with dynamic classification.
-    At runtime, classifies every detected brand into:
-    - government: official bodies, regulatory agencies, government databases
-    - dominant: large established commercial platforms (Google, Microsoft, etc.)
-    - competitor: same-scale commercial tools and services
-    Works for any industry without any hardcoding.
-    """
     prompt = (
         f"Read the AI response below and extract all brands, tools, organizations, or services mentioned.\n\n"
         f"For each brand found, classify it into one of three categories:\n"
@@ -153,14 +138,12 @@ def pass_two_llm_detection(
         f"    {{\"name\": \"Google\", \"category\": \"dominant\"}}\n"
         f"  ],\n"
         f"  \"target_mentioned\": true,\n"
-
         f"  \"target_context\": \"recommended\"\n"
         f"}}\n\n"
         f"Rules:\n"
         f"- all_brands: every brand/org mentioned in the response, with category assigned\n"
         f"- Only include brands that appear as recommendations, suggestions, or comparisons\n"
         f"- target_mentioned: true ONLY if \"{target_brand}\" appears explicitly by name\n"
-        f"- target_position: position of \"{target_brand}\" (1=first, 0=not mentioned)\n"
         f"- target_context: one of recommended / mentioned / warned_against / not_mentioned\n\n"
         f"Target brand to track: {target_brand}\n\n"
         f"AI Response:\n"
@@ -171,8 +154,6 @@ def pass_two_llm_detection(
         raw = _call_llm_for_detection(prompt)
         parsed = json.loads(raw)
 
-        # Normalize all_brands to always be a flat list of strings
-        # while preserving category info separately
         raw_brands = parsed.get("all_brands", [])
         normalized_brands = []
         government_brands = []
@@ -184,7 +165,6 @@ def pass_two_llm_detection(
                 name = item.get("name", "").strip()
                 category = item.get("category", "competitor")
             else:
-                # Fallback if LLM returns plain strings
                 name = str(item).strip()
                 category = "competitor"
 
@@ -212,10 +192,8 @@ def pass_two_llm_detection(
             "dominant_brands": [],
             "competitor_brands": [],
             "target_mentioned": False,
-            "target_position": 0,
             "target_context": "not_mentioned"
         }
-
 
 
 def detect_brands(
@@ -224,18 +202,17 @@ def detect_brands(
     icp_text: str = "",
     business_type: str = None,
     user_competitors: list = None,
-    custom_exclusions: list = None
+    custom_exclusions: list = None,
+    brand_entities: list = None,       # NEW: from DataForSEO scraper
 ) -> dict:
     """
     Main function. Auto-detects business type and runs both passes.
-    user_competitors: brands entered by user in frontend - always included
-    custom_exclusions: brands entered by user to exclude
+    brand_entities: optional list from DataForSEO scraper for second confirmation layer.
     """
     if business_type is None:
         business_type = detect_business_type(icp_text, target_brand)
 
     # Pass 1: string match on target brand + user competitors only
-    # No hardcoded lists - works correctly for any industry, any user
     string_matches = pass_one_string_match(
         response_text,
         business_type=business_type,
@@ -243,7 +220,7 @@ def detect_brands(
         user_competitors=user_competitors or []
     )
 
-    # Pass 2: LLM extracts all brand mentions intelligently from the response
+    # Pass 2: LLM extracts all brand mentions intelligently
     llm_result = pass_two_llm_detection(response_text, target_brand, business_type)
 
     all_brands = llm_result.get("all_brands", [])
@@ -251,41 +228,26 @@ def detect_brands(
         if brand not in all_brands:
             all_brands.append(brand)
 
-    # Apply custom exclusions from frontend (user-defined, not hardcoded)
     if custom_exclusions:
         custom_lower = [t.lower() for t in custom_exclusions]
         all_brands = [b for b in all_brands if b.lower() not in custom_lower]
 
-    # GROUND TRUTH check: the brand name must actually appear in the response text.
-    # The regex is the final authority - LLM cannot override this.
-    # We also generate smart variations to handle cases where the user typed
-    # the brand name differently from how it appears in AI responses.
-    # e.g. "siegemedia" typed without space matches "Siege Media" in responses.
+    # GROUND TRUTH: regex is the final authority
     import re as _re
 
     def build_brand_variants(name: str) -> list:
-        """Generate smart variations of a brand name for matching."""
         variants = [name]
-
-        # If no spaces: try inserting a space before each capital or word boundary
-        # e.g. "siegemedia" -> "siege media", "SiegeMedia" -> "Siege Media"
         if " " not in name:
-            # lowercase with space inserted at camelCase boundaries
             spaced = _re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
             if spaced != name:
                 variants.append(spaced)
-            # try all lowercase with space at common split points
-            # e.g. "siegemedia" - try splitting at each position
             lower = name.lower()
             for i in range(2, len(lower) - 1):
                 variants.append(lower[:i] + " " + lower[i:])
-
-        # Also try removing spaces (in case user typed "Siege Media" but AI says "SiegeMedia")
         if " " in name:
             variants.append(name.replace(" ", ""))
             variants.append(name.replace(" ", "").lower())
-
-        return list(dict.fromkeys(variants))  # deduplicate, preserve order
+        return list(dict.fromkeys(variants))
 
     target_in_string = False
     for variant in build_brand_variants(target_brand):
@@ -294,38 +256,46 @@ def detect_brands(
             target_in_string = True
             break
 
-    # ABSOLUTE GROUND TRUTH: brand is mentioned ONLY if regex confirms it.
-    # LLM result is completely overridden here - it cannot cause false positives.
-    # This is the final authority. No exceptions.
-    target_mentioned = target_in_string  # regex result ONLY, LLM cannot override
+    target_mentioned = target_in_string  # regex is final authority
 
-    # Get context and position from LLM only when we confirmed the brand is present
     target_context = "not_mentioned"
     if target_in_string:
         target_context = llm_result.get("target_context", "mentioned")
-        # If LLM says not_mentioned but string match found it, override context
         if target_context == "not_mentioned":
             target_context = "mentioned"
 
-    return {
-        "all_brands": all_brands,
-        "competitor_brands": llm_result.get("competitor_brands", []),
-        "government_brands": llm_result.get("government_brands", []),
-        "dominant_brands": llm_result.get("dominant_brands", []),
-        "target_mentioned": target_mentioned,
+    # NEW: DataForSEO brand entity confirmation (second layer, non-authoritative)
+    dataforseo_confirmed = confirm_with_brand_entities(
+        target_brand, brand_entities or []
+    )
 
-        "target_context": target_context,
-        "string_match_brands": string_matches,
-        "llm_detected_brands": llm_result.get("all_brands", []),
-        "business_type_detected": business_type
+    # NEW: Also enrich all_brands with DataForSEO brand entities
+    # Add any brands DataForSEO detected that our LLM missed
+    if brand_entities:
+        for entity in brand_entities:
+            entity_name = (entity.get("title") or "").strip()
+            if entity_name and entity_name.lower() != target_brand.lower():
+                if entity_name not in all_brands:
+                    all_brands.append(entity_name)
+
+    return {
+        "all_brands":             all_brands,
+        "competitor_brands":      llm_result.get("competitor_brands", []),
+        "government_brands":      llm_result.get("government_brands", []),
+        "dominant_brands":        llm_result.get("dominant_brands", []),
+        "target_mentioned":       target_mentioned,
+        "target_context":         target_context,
+        "dataforseo_confirmed":   dataforseo_confirmed,   # NEW
+        "string_match_brands":    string_matches,
+        "llm_detected_brands":    llm_result.get("all_brands", []),
+        "business_type_detected": business_type,
     }
 
 
-# Run this file directly to test: python core/brand_detector.py
 if __name__ == "__main__":
-    # Quick sanity test
     test_response = "We recommend Acme Corp and BrandX for your needs. BrandY is also popular."
     result = detect_brands(test_response, target_brand="Acme Corp")
     print(f"Target mentioned: {result['target_mentioned']}")
     print(f"All brands: {result['all_brands']}")
     print(f"Context: {result['target_context']}")
+    print(f"DataForSEO confirmed: {result['dataforseo_confirmed']}")

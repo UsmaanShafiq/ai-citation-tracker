@@ -2523,10 +2523,6 @@ elif st.session_state.step == 4:
                 st.warning("All tools rate-limited. Stopping early.")
                 break
 
-            # Debug: show what tools are being called (remove after confirming working)
-            if i == 0:
-                st.caption(f"🔧 Debug — Active tools: {active_tools}")
-
             tool_responses = run_selected_tools(q["query"], active_tools, country=bd.get("country", ""))
 
             for tool_name, raw_response in tool_responses.items():
@@ -2574,7 +2570,8 @@ elif st.session_state.step == 4:
                     brand_name,
                     icp_text=f"{', '.join(bd.get('products', []))} {', '.join(bd.get('customers', []))}",
                     business_type=detected_business_type,
-                    user_competitors=competitors_list
+                    user_competitors=competitors_list,
+                    brand_entities=raw_response.get("brand_entities", []) if isinstance(raw_response, dict) else [],
                 )
                 brand_data_detected["all_brands"] = [
                     b for b in brand_data_detected.get("all_brands", [])
@@ -2583,15 +2580,21 @@ elif st.session_state.step == 4:
                 linked_sites = web_sources if web_sources else extract_linked_sites(response_text)
 
                 all_results.append({
-                    "query": q["query"],
-                    "topic": q["topic"],
-                    "category": q["category"],
-                    "query_group": "C",
-                    "tool": tool_name,
-                    "response": response_text,
+                    "query":           q["query"],
+                    "topic":           q["topic"],
+                    "category":        q["category"],
+                    "query_group":     "C",
+                    "tool":            tool_name,
+                    "response":        response_text,
                     "brands_detected": brand_data_detected,
-                    "linked_sites": linked_sites,
-                    "web_searched": web_searched,
+                    "linked_sites":    linked_sites,
+                    "web_searched":    web_searched,
+                    # NEW: richer scraper fields
+                    "markdown":        raw_response.get("markdown", "") if isinstance(raw_response, dict) else "",
+                    "brand_entities":  raw_response.get("brand_entities", []) if isinstance(raw_response, dict) else [],
+                    "fan_out_queries": raw_response.get("fan_out_queries", []) if isinstance(raw_response, dict) else [],
+                    "check_url":       raw_response.get("check_url", "") if isinstance(raw_response, dict) else "",
+                    "item_types":      raw_response.get("item_types", []) if isinstance(raw_response, dict) else [],
                 })
 
                 # Update live feed
@@ -2865,26 +2868,126 @@ elif st.session_state.step == 4:
                                 else:
                                     exp_label = "✅ View AI Response (brand found)" if mentioned else "View AI Response"
                                 with st.expander(exp_label):
-                                    # Show sources inside expander
-                                    if web_searched_r and linked:
-                                        st.markdown("**🌐 Web Sources Used**")
-                                        st.caption("Response grounded in live web search — same as ChatGPT web interface.")
-                                        for s in linked[:8]:
-                                            title = s.get("title") or s.get("domain", "Source")
-                                            url = s.get("url", "")
-                                            domain = s.get("domain", "")
-                                            if url:
-                                                st.markdown(f"&nbsp;&nbsp;📎 [{title}]({url}) `{domain}`")
+                                    import re as _re
+
+                                    # ── Brand Entities Panel ──────────────────
+                                    b_entities = r.get("brand_entities", [])
+                                    df_confirmed = r["brands_detected"].get("dataforseo_confirmed", False)
+                                    if b_entities:
+                                        st.markdown("**🏷️ Brands Detected by DataForSEO**")
+                                        entity_html = ""
+                                        for ent in b_entities:
+                                            ename = ent.get("title", "")
+                                            ecat  = ent.get("category", "brand")
+                                            if ename.lower() == brand_name.lower():
+                                                # Our brand — coral highlight
+                                                entity_html += (
+                                                    f'<span style="background:#FF4939;color:#fff;'
+                                                    f'border-radius:999px;padding:3px 12px;margin:3px;'
+                                                    f'font-size:12px;font-weight:600;display:inline-block;">'
+                                                    f'🎯 {ename}</span>'
+                                                )
+                                            else:
+                                                # Competitor — grey
+                                                entity_html += (
+                                                    f'<span style="background:#334155;color:#94a3b8;'
+                                                    f'border-radius:999px;padding:3px 12px;margin:3px;'
+                                                    f'font-size:12px;display:inline-block;">'
+                                                    f'{ename} <span style="opacity:0.6;font-size:10px;">{ecat}</span></span>'
+                                                )
+                                        st.markdown(
+                                            f'<div style="padding:6px 0;">{entity_html}</div>',
+                                            unsafe_allow_html=True
+                                        )
+                                        if df_confirmed:
+                                            st.success(f"✓ {brand_name} also confirmed by DataForSEO brand detection")
                                         st.divider()
+
+                                    # ── Fan-out Queries ───────────────────────
+                                    fan_out = r.get("fan_out_queries", [])
+                                    if fan_out:
+                                        st.markdown("**🔍 ChatGPT Internally Searched**")
+                                        fan_html = " ".join([
+                                            f'<span style="background:#1e3a5f;color:#7dd3fc;'
+                                            f'border-radius:999px;padding:3px 12px;margin:3px;'
+                                            f'font-size:12px;display:inline-block;">{q}</span>'
+                                            for q in fan_out[:6]
+                                        ])
+                                        st.markdown(
+                                            f'<div style="padding:4px 0 8px 0;">{fan_html}</div>',
+                                            unsafe_allow_html=True
+                                        )
+                                        st.divider()
+
+                                    # ── Response Format Badges ────────────────
+                                    item_types = r.get("item_types", [])
+                                    check_url  = r.get("check_url", "")
+                                    if item_types or check_url:
+                                        badge_row = ""
+                                        type_icons = {
+                                            "chat_gpt_text": "📝 Text",
+                                            "chat_gpt_table": "📊 Table",
+                                            "chat_gpt_images": "🖼️ Images",
+                                            "chat_gpt_products": "🛍️ Products",
+                                            "chat_gpt_local_businesses": "📍 Local",
+                                            "chat_gpt_navigation_list": "🔗 Links",
+                                        }
+                                        for t in item_types:
+                                            label = type_icons.get(t, t.replace("chat_gpt_", "").title())
+                                            badge_row += (
+                                                f'<span style="background:#1e293b;color:#94a3b8;'
+                                                f'border-radius:6px;padding:2px 10px;margin:2px;'
+                                                f'font-size:11px;display:inline-block;">{label}</span>'
+                                            )
+                                        st.markdown(
+                                            f'<div style="padding:4px 0;">{badge_row}</div>',
+                                            unsafe_allow_html=True
+                                        )
+                                        if check_url:
+                                            st.markdown(f'[🔗 Verify this response on ChatGPT]({check_url})')
+                                        st.divider()
+
+                                    # ── Rich Sources Panel ────────────────────
+                                    if web_searched_r and linked:
+                                        st.markdown(f"**🌐 Web Sources Used ({len(linked)})**")
+                                        for s in linked[:8]:
+                                            title     = s.get("title") or s.get("domain", "Source")
+                                            url       = s.get("url", "")
+                                            domain    = s.get("domain", "")
+                                            thumbnail = s.get("thumbnail", "")
+                                            snippet   = s.get("snippet", "")
+                                            src_name  = s.get("source_name", "")
+                                            pub_date  = s.get("publication_date", "")
+                                            if not url:
+                                                continue
+                                            # Build source card
+                                            sc1, sc2 = st.columns([1, 8])
+                                            with sc1:
+                                                if thumbnail:
+                                                    st.image(thumbnail, width=48)
+                                                else:
+                                                    st.markdown("📎")
+                                            with sc2:
+                                                meta = ""
+                                                if src_name:
+                                                    meta += f"**{src_name}** · "
+                                                if pub_date:
+                                                    meta += pub_date[:10]
+                                                if meta:
+                                                    st.caption(meta)
+                                                st.markdown(f"[{title}]({url})")
+                                                if snippet:
+                                                    st.caption(snippet[:120] + ("..." if len(snippet) > 120 else ""))
+                                        st.divider()
+
+                                    # ── AI Response with brand highlight ──────
                                     if response:
-                                        import re as _re
-                                        highlighted = response
-                                        # Try exact name and spaced variants
                                         variants_to_highlight = [brand_name]
                                         if " " not in brand_name:
                                             spaced = _re.sub(r"([a-z])([A-Z])", r"\1 \2", brand_name)
                                             if spaced != brand_name:
                                                 variants_to_highlight.append(spaced)
+                                        highlighted = response
                                         for v in variants_to_highlight:
                                             highlighted = _re.sub(
                                                 r"\b" + _re.escape(v) + r"\b",

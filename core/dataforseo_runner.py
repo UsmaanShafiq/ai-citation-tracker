@@ -1,20 +1,34 @@
 """
 core/dataforseo_runner.py
 
-DataForSEO AI Optimization — ChatGPT LLM Responses (Live endpoint).
-Replaces the old ai_runner.py for tracking runs.
+DataForSEO AI Optimization — ChatGPT LLM Scraper (Live Advanced endpoint).
+Switched from LLM Responses to LLM Scraper for richer data.
 
-To revert to old runner, change the import in app.py back to:
-    from core.ai_runner import ALL_TOOLS, run_selected_tools, ...
+Scraper endpoint gives us:
+  - brand_entities: auto-detected brands with category
+  - sources: with thumbnails, snippets, publication dates
+  - markdown: full formatted response
+  - check_url: direct link to verify on ChatGPT
+  - fan_out_queries: what ChatGPT searched internally
+  - item_types: text/table/images/products breakdown
 
-Response structure (confirmed from live API docs):
-tasks[0].result[0].items[]
-  - type = "reasoning"  → skip (internal chain of thought)
-  - type = "message"    → use this
-      .sections[]
-          .type = "text"
-          .text = actual response text
-          .annotations[] = [{title, url}, ...]
+To revert to LLM Responses endpoint, change _SCRAPER_URL back to:
+  https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_responses/live
+and restore the old payload format.
+
+Response structure (confirmed from scraper API docs):
+tasks[0].result[0]
+  .markdown          → full formatted response text
+  .check_url         → direct ChatGPT verification URL
+  .fan_out_queries   → what ChatGPT searched internally
+  .item_types        → response format types
+  .brand_entities[]  → auto-detected brands with category/urls
+  .sources[]         → cited sources with thumbnail, snippet, publication_date
+  .items[]           → structured response elements (text, table, images etc)
+    type = "chat_gpt_text"
+      .markdown      → response text
+      .sources[]     → sources for this section
+      .brand_entities[] → brands in this section
 """
 
 import os
@@ -33,8 +47,9 @@ load_dotenv()
 ALL_TOOLS = {
     "ChatGPT (DataForSEO)": {
         "description": (
-            "Real ChatGPT responses via DataForSEO LLM Responses API. "
-            "Routes prompts through the actual ChatGPT interface, not the OpenAI API directly."
+            "Real ChatGPT responses via DataForSEO LLM Scraper API. "
+            "Scrapes the actual ChatGPT search interface for richer results "
+            "including brand entities, source thumbnails, and fan-out queries."
         ),
         "requires_key": "DATAFORSEO_LOGIN",
         "free": False,
@@ -107,36 +122,54 @@ def check_key_exists(requires_key: str) -> bool:
 
 
 # =============================================================================
-# ISO COUNTRY CODE MAP
+# LOCATION NAME MAP
+# Scraper uses location_name (full name) not ISO codes
 # =============================================================================
 
-_COUNTRY_ISO = {
-    "united states": "US", "united kingdom": "GB", "canada": "CA",
-    "australia": "AU", "germany": "DE", "india": "IN", "pakistan": "PK",
-    "france": "FR", "spain": "ES", "italy": "IT", "brazil": "BR",
-    "netherlands": "NL", "singapore": "SG", "uae": "AE",
-    "united arab emirates": "AE", "south africa": "ZA",
+_COUNTRY_LOCATION = {
+    "united states":  "United States",
+    "united kingdom": "United Kingdom",
+    "canada":         "Canada",
+    "australia":      "Australia",
+    "germany":        "Germany",
+    "india":          "India",
+    "pakistan":       "Pakistan",
+    "france":         "France",
+    "spain":          "Spain",
+    "italy":          "Italy",
+    "brazil":         "Brazil",
+    "netherlands":    "Netherlands",
+    "singapore":      "Singapore",
+    "uae":            "United Arab Emirates",
+    "united arab emirates": "United Arab Emirates",
+    "south africa":   "South Africa",
+    "global":         "United States",  # default for global
 }
 
 
 # =============================================================================
-# CORE API CALL
+# CORE API CALL — LLM Scraper
 # =============================================================================
 
-_LIVE_URL = "https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_responses/live"
-_MODEL    = "gpt-4.1-mini"
+_SCRAPER_URL = "https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_scraper/live/advanced"
 
 
-def _call_live(prompt: str, country: str = "") -> dict:
+def _call_scraper(keyword: str, country: str = "") -> dict:
     """
-    Sends one prompt to DataForSEO ChatGPT LLM Responses Live endpoint.
+    Sends one keyword/prompt to DataForSEO ChatGPT LLM Scraper.
 
-    Confirmed response path (from API docs + live example):
-      tasks[0].result[0].items[]
-        → skip type="reasoning"
-        → use  type="message"
-             .sections[].text       ← response text
-             .sections[].annotations[].url/title  ← sources
+    Returns:
+    {
+        "text":            str,   # full response text (from markdown)
+        "markdown":        str,   # full markdown response
+        "sources":         list,  # [{url, title, domain, thumbnail,
+                                  #   snippet, source_name, publication_date}]
+        "brand_entities":  list,  # [{title, category, urls}]
+        "fan_out_queries": list,  # [str, ...]
+        "check_url":       str,   # direct ChatGPT verification URL
+        "item_types":      list,  # response format types
+        "web_searched":    bool,
+    }
     """
     login, password = _get_auth()
     if not login or not password:
@@ -145,33 +178,36 @@ def _call_live(prompt: str, country: str = "") -> dict:
                 "ERROR: DataForSEO credentials not set. "
                 "Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD in the API Keys sidebar."
             ),
+            "markdown": "",
             "sources": [],
+            "brand_entities": [],
+            "fan_out_queries": [],
+            "check_url": "",
+            "item_types": [],
             "web_searched": False,
         }
 
-    payload = [{
-        "model_name": _MODEL,
-        "user_prompt": prompt.strip()[:500],   # API hard limit
-        "web_search": True,
-        "max_output_tokens": 1024,
-    }]
+    # Resolve location name
+    location = _COUNTRY_LOCATION.get(country.lower().strip(), "United States")
 
-    # Add country code for geo-aware web search
-    country_iso = _COUNTRY_ISO.get(country.lower().strip(), "")
-    if country_iso:
-        payload[0]["web_search_country_iso_code"] = country_iso
+    payload = [{
+        "keyword":       keyword.strip()[:2000],  # scraper allows 2000 chars
+        "location_name": location,
+        "language_name": "English",
+        "force_web_search": True,
+    }]
 
     try:
         resp = requests.post(
-            _LIVE_URL,
+            _SCRAPER_URL,
             json=payload,
             auth=HTTPBasicAuth(login, password),
-            timeout=120,   # API docs say up to 120 seconds
+            timeout=120,  # API docs say up to 120 seconds
         )
         resp.raise_for_status()
         data = resp.json()
     except requests.exceptions.Timeout:
-        return {"text": "ERROR: DataForSEO request timed out (120s).", "sources": [], "web_searched": False}
+        return _error("DataForSEO request timed out (120s).")
     except requests.exceptions.HTTPError as e:
         code = e.response.status_code if e.response is not None else "?"
         body = ""
@@ -179,94 +215,178 @@ def _call_live(prompt: str, country: str = "") -> dict:
             body = e.response.text[:300]
         except Exception:
             pass
-        return {"text": f"ERROR: DataForSEO HTTP {code}: {body}", "sources": [], "web_searched": False}
+        return _error(f"DataForSEO HTTP {code}: {body}")
     except requests.exceptions.RequestException as e:
-        return {"text": f"ERROR: DataForSEO connection failed: {e}", "sources": [], "web_searched": False}
+        return _error(f"DataForSEO connection failed: {e}")
 
     # ── Parse response ────────────────────────────────────────────────────────
     try:
         tasks = data.get("tasks") or []
         if not tasks:
-            return {"text": "ERROR: DataForSEO returned no tasks.", "sources": [], "web_searched": False}
+            return _error("DataForSEO returned no tasks.")
 
         task        = tasks[0]
         status_code = task.get("status_code", 0)
         status_msg  = task.get("status_message", "")
 
         if status_code != 20000:
-            return {
-                "text": f"ERROR: DataForSEO task failed (code {status_code}): {status_msg}",
-                "sources": [],
-                "web_searched": False,
-            }
+            return _error(f"DataForSEO task failed (code {status_code}): {status_msg}")
 
         results = task.get("result") or []
         if not results:
-            return {"text": "ERROR: DataForSEO returned empty result array.", "sources": [], "web_searched": False}
+            return _error("DataForSEO returned empty result array.")
 
         result = results[0]
-        items  = result.get("items") or []
 
+        # ── Top-level fields ─────────────────────────────────────────────────
+        full_markdown = (result.get("markdown") or "").strip()
+        check_url     = (result.get("check_url") or "").strip()
+        fan_out       = result.get("fan_out_queries") or []
+        item_types    = result.get("item_types") or []
+
+        # ── Brand entities (top-level) ───────────────────────────────────────
+        brand_entities = _parse_brand_entities(result.get("brand_entities") or [])
+
+        # ── Sources (top-level — what ChatGPT actually cited) ────────────────
+        sources = _parse_sources(result.get("sources") or [])
+
+        # ── Extract plain text from items for brand detection ────────────────
+        # Use markdown as primary text source, fall back to items
         text_parts = []
-        sources    = []
-
-        for item in items:
-            item_type = item.get("type", "")
-
-            # Skip reasoning items — they are internal chain-of-thought, not the response
-            if item_type == "reasoning":
-                continue
-
-            # Only process message items
-            if item_type != "message":
-                continue
-
-            for section in item.get("sections") or []:
-                # Extract response text
-                t = (section.get("text") or "").strip()
-                if t:
-                    text_parts.append(t)
-
-                # Extract source annotations (confirmed inside sections)
-                for ann in section.get("annotations") or []:
-                    url   = (ann.get("url") or "").strip()
-                    title = (ann.get("title") or url or "Source").strip()
-                    if url:
-                        domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-                        # Strip ?utm_source=openai tracking params for clean display
-                        clean_url = url.split("?utm_source=")[0] if "?utm_source=" in url else url
-                        sources.append({"url": clean_url, "title": title, "domain": domain})
+        if full_markdown:
+            # Strip markdown image syntax for clean text
+            import re as _re
+            clean = _re.sub(r'!\[.*?\]\(.*?\)', '', full_markdown)
+            clean = _re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', clean)
+            text_parts.append(clean.strip())
+        else:
+            # Fall back to extracting text from items array
+            for item in result.get("items") or []:
+                item_type = item.get("type", "")
+                if item_type == "chat_gpt_text":
+                    md = (item.get("markdown") or "").strip()
+                    if md:
+                        text_parts.append(md)
+                    # Also get sources from items if not at top level
+                    if not sources:
+                        sources.extend(
+                            _parse_sources(item.get("sources") or [])
+                        )
+                    # Also get brand entities from items
+                    if not brand_entities:
+                        brand_entities.extend(
+                            _parse_brand_entities(item.get("brand_entities") or [])
+                        )
 
         full_text = "\n\n".join(text_parts).strip()
 
-        if not full_text:
-            return {
-                "text": "ERROR: DataForSEO returned no message content.",
-                "sources": [],
-                "web_searched": result.get("web_search", False),
-            }
+        if not full_text and not full_markdown:
+            return _error("DataForSEO returned no text content.")
+
+        # Use markdown as display text if available, plain text for detection
+        display_text = full_markdown or full_text
 
         return {
-            "text": full_text,
-            "sources": sources,
-            "web_searched": result.get("web_search", True),
+            "text":            full_text or full_markdown,
+            "markdown":        full_markdown,
+            "sources":         sources,
+            "brand_entities":  brand_entities,
+            "fan_out_queries": [str(q) for q in fan_out if q],
+            "check_url":       check_url,
+            "item_types":      item_types,
+            "web_searched":    True,
         }
 
     except Exception as e:
-        return {
-            "text": f"ERROR: Failed to parse DataForSEO response: {e}",
-            "sources": [],
-            "web_searched": False,
-        }
+        return _error(f"Failed to parse DataForSEO response: {e}")
+
+
+def _error(msg: str) -> dict:
+    """Returns a consistent error response dict."""
+    return {
+        "text":            f"ERROR: {msg}",
+        "markdown":        "",
+        "sources":         [],
+        "brand_entities":  [],
+        "fan_out_queries": [],
+        "check_url":       "",
+        "item_types":      [],
+        "web_searched":    False,
+    }
+
+
+def _parse_sources(raw_sources: list) -> list:
+    """
+    Parses the sources array from the scraper response.
+    Returns list of dicts with all available fields.
+    """
+    parsed = []
+    seen_urls = set()
+    for s in raw_sources:
+        if not isinstance(s, dict):
+            continue
+        url = (s.get("url") or "").strip()
+        # Clean utm tracking params
+        if "?utm_source=" in url:
+            url = url.split("?utm_source=")[0]
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+
+        domain = (s.get("domain") or "").strip()
+        # Clean markdown link format from domain if present
+        if domain.startswith("["):
+            import re as _re
+            m = _re.search(r'\[([^\]]+)\]', domain)
+            if m:
+                domain = m.group(1)
+
+        parsed.append({
+            "url":              url,
+            "title":            (s.get("title") or domain or "Source").strip(),
+            "domain":           domain or url.replace("https://", "").replace("http://", "").split("/")[0],
+            "thumbnail":        (s.get("thumbnail") or "").strip(),
+            "snippet":          (s.get("snippet") or "").strip(),
+            "source_name":      (s.get("source_name") or "").strip(),
+            "publication_date": (s.get("publication_date") or "").strip(),
+            "markdown":         (s.get("markdown") or "").strip(),
+        })
+    return parsed
+
+
+def _parse_brand_entities(raw_entities: list) -> list:
+    """
+    Parses brand_entities from the scraper response.
+    Returns list of dicts: {title, category, urls}
+    """
+    parsed = []
+    seen = set()
+    for e in raw_entities:
+        if not isinstance(e, dict):
+            continue
+        title = (e.get("title") or "").strip()
+        if not title or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        urls = []
+        for u in e.get("urls") or []:
+            if isinstance(u, dict) and u.get("url"):
+                urls.append(u["url"])
+        parsed.append({
+            "title":    title,
+            "category": (e.get("category") or "brand").strip(),
+            "urls":     urls,
+        })
+    return parsed
 
 
 # =============================================================================
-# PUBLIC INTERFACE — matches shape app.py expects from old ai_runner
+# PUBLIC INTERFACE — matches shape app.py expects from old runner
 # =============================================================================
 
 def run_selected_tools(query: str, selected_tools: list, country: str = "") -> dict:
     """
-    Runs query through DataForSEO ChatGPT LLM Responses.
+    Runs query through DataForSEO ChatGPT LLM Scraper.
     Returns dict keyed by tool name — matches old ai_runner.run_selected_tools.
     """
     results = {}
@@ -274,7 +394,7 @@ def run_selected_tools(query: str, selected_tools: list, country: str = "") -> d
     if TOOL_NAME not in selected_tools:
         return results
 
-    response = _call_live(query, country=country)
+    response = _call_scraper(query, country=country)
     is_error = response["text"].startswith("ERROR")
     _track(response["text"], is_error=is_error)
     results[TOOL_NAME] = response
