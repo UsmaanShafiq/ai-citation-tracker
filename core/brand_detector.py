@@ -147,7 +147,7 @@ def pass_two_llm_detection(
         f"- target_context: one of recommended / mentioned / warned_against / not_mentioned\n\n"
         f"Target brand to track: {target_brand}\n\n"
         f"AI Response:\n"
-        f"\"\"\"{response_text[:2000]}\"\"\""
+        f"\"\"\"{response_text}\"\"\""
     )
 
     try:

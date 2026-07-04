@@ -2995,7 +2995,7 @@ elif st.session_state.step == 4:
                                                 highlighted,
                                                 flags=_re.IGNORECASE
                                             )
-                                        st.markdown(highlighted[:3000])
+                                        st.markdown(highlighted)
                                         if mentioned:
                                             st.success(f"✅ {brand_name} appears in this response")
                                     else:
